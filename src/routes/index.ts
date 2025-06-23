@@ -7,6 +7,7 @@ import {
   getTokenHolders,
   getTokenHistory,
 } from '../controllers/tokenController.js';
+import dashboardRouter from './dashboard.js';
 
 const router = Router();
 
@@ -17,5 +18,7 @@ router.get('/tokens', getTokens);
 router.get('/tokens/:mint/metrics', getTokenMetrics);
 router.get('/tokens/:mint/holders/top', getTokenHolders);
 router.get('/tokens/:mint/history', getTokenHistory);
+
+router.use('/dashboard', dashboardRouter);
 
 export default router;

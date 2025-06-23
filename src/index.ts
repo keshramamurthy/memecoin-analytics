@@ -10,8 +10,9 @@ async function start() {
     
     server.listen(env.PORT, () => {
       console.log(`Server running on port ${env.PORT}`);
-      console.log(`Health check: http://localhost:${env.PORT}/health`);
-      console.log(`Metrics: http://localhost:${env.PORT}/metrics`);
+      console.log(`Dashboard: http://localhost:${env.PORT}`);
+      console.log(`Health check: http://localhost:${env.PORT}/api/health`);
+      console.log(`Metrics: http://localhost:${env.PORT}/api/metrics`);
       console.log(`Socket.IO: ws://localhost:${env.PORT}/ws`);
     });
 

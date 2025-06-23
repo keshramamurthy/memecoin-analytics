@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Memecoin Analytics - API Test Dashboard</title>
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f0f0f 0%, #1a1a1a 100%);
+            color: #e0e0e0;
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        h1 {
+            color: #a78bfa;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 0 0 20px rgba(167, 139, 250, 0.3);
+        }
+
+        .subtitle {
+            color: #888;
+            font-size: 1.1em;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+        }
+
+        .card h2 {
+            color: #a78bfa;
+            margin-bottom: 15px;
+            font-size: 1.5em;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .status-connected { background: #00ff88; }
+        .status-disconnected { background: #ff4444; }
+        .status-connecting { background: #ffaa00; }
+
+        input, select, button {
+            width: 100%;
+            padding: 12px;
+            margin: 8px 0;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            background: rgba(0, 0, 0, 0.3);
+            color: #e0e0e0;
+            font-size: 14px;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: #6366f1;
+            box-shadow: 0 0 10px rgba(99, 102, 241, 0.3);
+        }
+
+        button {
+            background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(99, 102, 241, 0.4);
+        }
+
+        button:disabled {
+            background: #444;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .response-area {
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+
+        .log-entry {
+            margin-bottom: 10px;
+            padding: 8px;
+            border-radius: 4px;
+            border-left: 4px solid #6366f1;
+            background: rgba(99, 102, 241, 0.1);
+        }
+
+        .log-error {
+            border-left-color: #ff4444;
+            background: rgba(255, 68, 68, 0.1);
+        }
+
+        .log-success {
+            border-left-color: #00ff88;
+            background: rgba(0, 255, 136, 0.1);
+        }
+
+        .price-display {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .price-card {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: center;
+        }
+
+        .price-value {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #00ff88;
+            margin-bottom: 5px;
+        }
+
+        .price-label {
+            color: #888;
+            font-size: 0.9em;
+        }
+
+        .subscription-list {
+            max-height: 200px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+
+        .subscription-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px;
+            margin: 5px 0;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+
+        .unsubscribe-btn {
+            padding: 4px 8px;
+            font-size: 11px;
+            background: #ff4444;
+            margin: 0;
+            width: auto;
+        }
+
+        .full-width {
+            grid-column: 1 / -1;
+        }
+
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            padding: 5px;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 10px 20px;
+            text-align: center;
+            cursor: pointer;
+            border-radius: 6px;
+            transition: all 0.3s ease;
+        }
+
+        .tab.active {
+            background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+            color: white;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 Memecoin Analytics Dashboard</h1>
+            <p class="subtitle">Real-time API Testing & WebSocket Interface</p>
+        </header>
+
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('websocket')">WebSocket Live</div>
+            <div class="tab" onclick="switchTab('rest')">REST API Testing</div>
+            <div class="tab" onclick="switchTab('monitoring')">System Monitoring</div>
+        </div>
+
+        <!-- WebSocket Tab -->
+        <div id="websocket" class="tab-content active">
+            <div class="grid">
+                <div class="card">
+                    <h2>
+                        <span class="status-indicator" id="ws-status"></span>
+                        WebSocket Connection
+                    </h2>
+                    <input type="text" id="ws-url" value="/ws" placeholder="WebSocket URL" readonly>
+                    <button id="ws-connect" onclick="connectWebSocket()">Connect</button>
+                    <button id="ws-disconnect" onclick="disconnectWebSocket()" disabled>Disconnect</button>
+                    
+                    <h3 style="margin-top: 20px; color: #a78bfa;">Token Subscriptions</h3>
+                    <input type="text" id="token-mint" placeholder="Token Mint Address (e.g., 9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump)">
+                    <button onclick="subscribeToToken()" id="subscribe-btn" disabled>Subscribe</button>
+                    
+                    <div class="subscription-list" id="subscriptions"></div>
+                </div>
+
+                <div class="card">
+                    <h2>Real-time Price Updates</h2>
+                    <div class="price-display" id="price-display">
+                        <div style="text-align: center; color: #888; grid-column: 1 / -1; padding: 40px;">
+                            No active subscriptions
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card full-width">
+                <h2>WebSocket Logs</h2>
+                <div class="response-area" id="ws-logs"></div>
+                <button onclick="clearLogs('ws-logs')" style="width: auto; margin-top: 10px;">Clear Logs</button>
+            </div>
+        </div>
+
+        <!-- REST API Tab -->
+        <div id="rest" class="tab-content">
+            <div class="grid">
+                <div class="card">
+                    <h2>Get All Tokens</h2>
+                    <input type="number" id="tokens-page" placeholder="Page (default: 1)" min="1">
+                    <input type="number" id="tokens-limit" placeholder="Limit (default: 20, max: 100)" min="1" max="100">
+                    <button onclick="getAllTokens()">Fetch Tokens</button>
+                    <div class="response-area" id="tokens-response"></div>
+                </div>
+
+                <div class="card">
+                    <h2>Token Metrics</h2>
+                    <input type="text" id="metrics-mint" placeholder="Token Mint Address">
+                    <select id="metrics-window">
+                        <option value="1h">1 Hour</option>
+                        <option value="5m">5 Minutes</option>
+                        <option value="1m">1 Minute</option>
+                    </select>
+                    <button onclick="getTokenMetrics()">Get Metrics</button>
+                    <div class="response-area" id="metrics-response"></div>
+                </div>
+
+                <div class="card">
+                    <h2>Top Holders</h2>
+                    <input type="text" id="holders-mint" placeholder="Token Mint Address">
+                    <input type="number" id="holders-limit" placeholder="Limit (default: 10, max: 100)" min="1" max="100">
+                    <button onclick="getTopHolders()">Get Holders</button>
+                    <div class="response-area" id="holders-response"></div>
+                </div>
+
+                <div class="card">
+                    <h2>Price History</h2>
+                    <input type="text" id="history-mint" placeholder="Token Mint Address">
+                    <select id="history-window">
+                        <option value="1h">1 Hour</option>
+                        <option value="5m">5 Minutes</option>
+                        <option value="1m">1 Minute</option>
+                    </select>
+                    <button onclick="getPriceHistory()">Get History</button>
+                    <div class="response-area" id="history-response"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Monitoring Tab -->
+        <div id="monitoring" class="tab-content">
+            <div class="grid">
+                <div class="card">
+                    <h2>System Health</h2>
+                    <button onclick="checkHealth()">Check Health</button>
+                    <div class="response-area" id="health-response"></div>
+                </div>
+
+                <div class="card">
+                    <h2>API Information</h2>
+                    <button onclick="getAPIInfo()">Get API Info</button>
+                    <div class="response-area" id="api-info-response"></div>
+                </div>
+
+                <div class="card full-width">
+                    <h2>Prometheus Metrics</h2>
+                    <button onclick="getMetrics()">Fetch Metrics</button>
+                    <div class="response-area" id="prometheus-response"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let socket = null;
+        let subscriptions = new Set();
+        const BASE_URL = '/api';
+
+        // Tab switching
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            event.target.classList.add('active');
+            document.getElementById(tabName).classList.add('active');
+        }
+
+        // WebSocket functionality
+        function connectWebSocket() {
+            const url = document.getElementById('ws-url').value;
+            addLog('ws-logs', `Connecting to ${url}...`, 'info');
+            
+            document.getElementById('ws-status').className = 'status-indicator status-connecting';
+            
+            try {
+                // Use relative path for same-origin connection
+                socket = io('/ws');
+                
+                socket.on('connect', () => {
+                    addLog('ws-logs', '✅ Connected to WebSocket', 'success');
+                    document.getElementById('ws-status').className = 'status-indicator status-connected';
+                    document.getElementById('ws-connect').disabled = true;
+                    document.getElementById('ws-disconnect').disabled = false;
+                    document.getElementById('subscribe-btn').disabled = false;
+                });
+
+                socket.on('connected', (data) => {
+                    addLog('ws-logs', `Server welcome: ${JSON.stringify(data, null, 2)}`, 'info');
+                });
+
+                socket.on('disconnect', () => {
+                    addLog('ws-logs', '❌ Disconnected from WebSocket', 'error');
+                    document.getElementById('ws-status').className = 'status-indicator status-disconnected';
+                    document.getElementById('ws-connect').disabled = false;
+                    document.getElementById('ws-disconnect').disabled = true;
+                    document.getElementById('subscribe-btn').disabled = true;
+                });
+
+                socket.on('subscription_success', (data) => {
+                    addLog('ws-logs', `✅ Subscribed to ${data.tokenMint}`, 'success');
+                    subscriptions.add(data.tokenMint);
+                    updateSubscriptionsList();
+                });
+
+                socket.on('subscription_error', (data) => {
+                    addLog('ws-logs', `❌ Subscription failed: ${data.message}`, 'error');
+                });
+
+                socket.on('unsubscription_success', (data) => {
+                    addLog('ws-logs', `✅ Unsubscribed from ${data.tokenMint}`, 'success');
+                    subscriptions.delete(data.tokenMint);
+                    updateSubscriptionsList();
+                    updatePriceDisplay();
+                });
+
+                socket.on('price_update', (data) => {
+                    addLog('ws-logs', `💰 Price update for ${data.tokenMint}: $${data.priceUsd}`, 'info');
+                    updatePriceCard(data);
+                });
+
+                socket.on('error', (data) => {
+                    addLog('ws-logs', `❌ Error: ${JSON.stringify(data)}`, 'error');
+                });
+
+            } catch (error) {
+                addLog('ws-logs', `❌ Connection failed: ${error.message}`, 'error');
+                document.getElementById('ws-status').className = 'status-indicator status-disconnected';
+            }
+        }
+
+        function disconnectWebSocket() {
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+                subscriptions.clear();
+                updateSubscriptionsList();
+                updatePriceDisplay();
+            }
+        }
+
+        function subscribeToToken() {
+            const mint = document.getElementById('token-mint').value.trim();
+            if (!mint) {
+                alert('Please enter a token mint address');
+                return;
+            }
+
+            if (socket && socket.connected) {
+                socket.emit('message', `${mint},subscribe`);
+                addLog('ws-logs', `📡 Subscribing to ${mint}...`, 'info');
+                document.getElementById('token-mint').value = '';
+            }
+        }
+
+        function unsubscribeFromToken(mint) {
+            if (socket && socket.connected) {
+                socket.emit('message', `${mint},unsubscribe`);
+                addLog('ws-logs', `📡 Unsubscribing from ${mint}...`, 'info');
+            }
+        }
+
+        function updateSubscriptionsList() {
+            const container = document.getElementById('subscriptions');
+            if (subscriptions.size === 0) {
+                container.innerHTML = '<div style="text-align: center; color: #888; padding: 20px;">No active subscriptions</div>';
+                return;
+            }
+
+            container.innerHTML = Array.from(subscriptions).map(mint => `
+                <div class="subscription-item">
+                    <span>${mint}</span>
+                    <button class="unsubscribe-btn" onclick="unsubscribeFromToken('${mint}')">Unsubscribe</button>
+                </div>
+            `).join('');
+        }
+
+        function updatePriceCard(data) {
+            const display = document.getElementById('price-display');
+            
+            if (subscriptions.size === 0) {
+                display.innerHTML = '<div style="text-align: center; color: #888; grid-column: 1 / -1; padding: 40px;">No active subscriptions</div>';
+                return;
+            }
+
+            let existingCard = document.getElementById(`price-${data.tokenMint}`);
+            
+            if (!existingCard) {
+                // Create new card
+                existingCard = document.createElement('div');
+                existingCard.className = 'price-card';
+                existingCard.id = `price-${data.tokenMint}`;
+                display.appendChild(existingCard);
+                
+                // Remove placeholder if it exists
+                const placeholder = display.querySelector('div[style*="No active subscriptions"]');
+                if (placeholder) placeholder.remove();
+            }
+
+            existingCard.innerHTML = `
+                <div class="price-value">$${data.priceUsd?.toFixed(8) || 'N/A'}</div>
+                <div class="price-label">USD Price</div>
+                <div class="price-value" style="font-size: 1.2em; color: #a78bfa;">${data.priceInSol?.toFixed(10) || 'N/A'}</div>
+                <div class="price-label">SOL Price</div>
+                <div class="price-value" style="font-size: 1em; color: #ffaa00;">$${(data.marketCap || 0).toLocaleString()}</div>
+                <div class="price-label">Market Cap</div>
+                <div style="margin-top: 10px; font-size: 0.8em; color: #888;">${data.tokenMint.substring(0, 8)}...</div>
+                <div style="font-size: 0.7em; color: #666;">${new Date(data.timestamp).toLocaleTimeString()}</div>
+            `;
+        }
+
+        function updatePriceDisplay() {
+            const display = document.getElementById('price-display');
+            // Remove cards for unsubscribed tokens
+            Array.from(display.children).forEach(card => {
+                if (card.id && card.id.startsWith('price-')) {
+                    const mint = card.id.replace('price-', '');
+                    if (!subscriptions.has(mint)) {
+                        card.remove();
+                    }
+                }
+            });
+
+            if (subscriptions.size === 0) {
+                display.innerHTML = '<div style="text-align: center; color: #888; grid-column: 1 / -1; padding: 40px;">No active subscriptions</div>';
+            }
+        }
+
+        // REST API functions
+        async function getAllTokens() {
+            const page = document.getElementById('tokens-page').value || 1;
+            const limit = document.getElementById('tokens-limit').value || 20;
+            
+            try {
+                const response = await fetch(`${BASE_URL}/tokens?page=${page}&limit=${limit}`);
+                const data = await response.json();
+                document.getElementById('tokens-response').textContent = JSON.stringify(data, null, 2);
+            } catch (error) {
+                document.getElementById('tokens-response').textContent = `Error: ${error.message}`;
+            }
+        }
+
+        async function getTokenMetrics() {
+            const mint = document.getElementById('metrics-mint').value.trim();
+            const window = document.getElementById('metrics-window').value;
+            
+            if (!mint) {
+                alert('Please enter a token mint address');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${BASE_URL}/tokens/${mint}/metrics?window=${window}`);
+                const data = await response.json();
+                document.getElementById('metrics-response').textContent = JSON.stringify(data, null, 2);
+            } catch (error) {
+                document.getElementById('metrics-response').textContent = `Error: ${error.message}`;
+            }
+        }
+
+        async function getTopHolders() {
+            const mint = document.getElementById('holders-mint').value.trim();
+            const limit = document.getElementById('holders-limit').value || 10;
+            
+            if (!mint) {
+                alert('Please enter a token mint address');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${BASE_URL}/tokens/${mint}/holders/top?limit=${limit}`);
+                const data = await response.json();
+                document.getElementById('holders-response').textContent = JSON.stringify(data, null, 2);
+            } catch (error) {
+                document.getElementById('holders-response').textContent = `Error: ${error.message}`;
+            }
+        }
+
+        async function getPriceHistory() {
+            const mint = document.getElementById('history-mint').value.trim();
+            const window = document.getElementById('history-window').value;
+            
+            if (!mint) {
+                alert('Please enter a token mint address');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${BASE_URL}/tokens/${mint}/history?window=${window}`);
+                const data = await response.json();
+                document.getElementById('history-response').textContent = JSON.stringify(data, null, 2);
+            } catch (error) {
+                document.getElementById('history-response').textContent = `Error: ${error.message}`;
+            }
+        }
+
+        async function checkHealth() {
+            try {
+                const response = await fetch(`${BASE_URL}/health`);
+                const data = await response.json();
+                document.getElementById('health-response').textContent = JSON.stringify(data, null, 2);
+            } catch (error) {
+                document.getElementById('health-response').textContent = `Error: ${error.message}`;
+            }
+        }
+
+        async function getAPIInfo() {
+            try {
+                const response = await fetch(`${BASE_URL}/dashboard/info`);
+                const data = await response.json();
+                document.getElementById('api-info-response').textContent = JSON.stringify(data, null, 2);
+            } catch (error) {
+                document.getElementById('api-info-response').textContent = `Error: ${error.message}`;
+            }
+        }
+
+        async function getMetrics() {
+            try {
+                const response = await fetch(`${BASE_URL}/metrics`);
+                const data = await response.text();
+                document.getElementById('prometheus-response').textContent = data;
+            } catch (error) {
+                document.getElementById('prometheus-response').textContent = `Error: ${error.message}`;
+            }
+        }
+
+        // Utility functions
+        function addLog(containerId, message, type = 'info') {
+            const container = document.getElementById(containerId);
+            const timestamp = new Date().toLocaleTimeString();
+            const logClass = type === 'error' ? 'log-error' : type === 'success' ? 'log-success' : '';
+            
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry ${logClass}`;
+            logEntry.textContent = `[${timestamp}] ${message}`;
+            
+            container.appendChild(logEntry);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function clearLogs(containerId) {
+            document.getElementById(containerId).innerHTML = '';
+        }
+
+        // Initialize connection status
+        document.getElementById('ws-status').className = 'status-indicator status-disconnected';
+
+        // Add sample token mint for testing
+        document.getElementById('token-mint').placeholder = 'e.g., 9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump';
+        document.getElementById('metrics-mint').placeholder = 'e.g., 9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump';
+        document.getElementById('holders-mint').placeholder = 'e.g., 9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump';
+        document.getElementById('history-mint').placeholder = 'e.g., 9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump';
+    </script>
+</body>
+</html>
