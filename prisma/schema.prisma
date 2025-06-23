@@ -1,0 +1,30 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model TokenPrice {
+  tokenMint       String   @id
+  priceUsd        Decimal
+  priceInSol      Decimal
+  marketCap       Decimal
+  totalSupply     Decimal
+  lastUpdated     DateTime @updatedAt
+  
+  @@index([lastUpdated])
+}
+
+model PriceHistory {
+  id              Int      @id @default(autoincrement())
+  tokenMint       String
+  priceUsd        Decimal
+  priceInSol      Decimal
+  marketCap       Decimal
+  timestamp       DateTime @default(now())
+  
+  @@index([tokenMint, timestamp])
+}

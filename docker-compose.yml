@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - DATABASE_URL=file:./prisma/dev.db
+      - REDIS_URL=redis://cache:6379
+      - HELIUS_API_KEY=${HELIUS_API_KEY}
+      - POLL_MS=2000
+    volumes:
+      - dbdata:/app/prisma
+    depends_on:
+      - cache
+    restart: unless-stopped
+
+  cache:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  dbdata:
+  redis_data:
