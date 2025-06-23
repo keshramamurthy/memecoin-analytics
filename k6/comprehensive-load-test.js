@@ -127,14 +127,28 @@ function testRestApiEndpoints(data) {
     console.log(`❌ Token metrics failed for ${token.slice(0, 8)}...${token.slice(-8)}: ${metricsResponse.status}`);
   } else {
     const responseData = JSON.parse(metricsResponse.body);
-    console.log(`✅ Token metrics: ${token.slice(0, 8)}...${token.slice(-8)} - Price: $${responseData.priceUsd || 'N/A'}`);
+    console.log(`✅ Enhanced metrics: ${token.slice(0, 8)}...${token.slice(-8)} - ${responseData.name || 'Unknown'} (${responseData.symbol || 'UNK'}) - Price: $${responseData.priceUsd || 'N/A'} - MC: $${responseData.marketCap?.toLocaleString() || 'N/A'} - Concentration: ${responseData.concentrationRatio?.toFixed(2) || 'N/A'}%`);
   }
   
-  // Test 2: Token holders (if endpoint exists)
+  // Test 2: Token holders (enhanced)
   const holdersResponse = http.get(`${BASE_URL}/tokens/${token}/holders/top?limit=10`);
-  check(holdersResponse, {
-    'Holders endpoint responds': (r) => r.status === 200 || r.status === 404, // 404 is acceptable if not implemented
+  const holdersSuccess = check(holdersResponse, {
+    'Holders endpoint responds': (r) => r.status === 200,
+    'Holders endpoint response time < 3s': (r) => r.timings.duration < 3000,
+    'Holders has valid data': (r) => {
+      try {
+        const data = JSON.parse(r.body);
+        return data.data && Array.isArray(data.data);
+      } catch (e) {
+        return false;
+      }
+    },
   });
+  
+  if (holdersSuccess) {
+    const holdersData = JSON.parse(holdersResponse.body);
+    console.log(`👥 Holders: ${token.slice(0, 8)}...${token.slice(-8)} - Top holder: ${holdersData.data[0]?.percentage?.toFixed(2) || 'N/A'}%`);
+  }
   
   // Test 3: Trade history
   const tradesResponse = http.get(`${BASE_URL}/tokens/${token}/trades?limit=50`);
@@ -175,7 +189,7 @@ function testWebSocketConnections(data) {
           const eventData = parsedData[1];
           
           if (eventName === 'price_update') {
-            console.log(`💰 Price update: ${token.slice(0, 8)}...${token.slice(-8)} = $${eventData.priceUsd || 'N/A'}`);
+            console.log(`💰 Real-time update: ${token.slice(0, 8)}...${token.slice(-8)} = $${eventData.priceUsd || 'N/A'} (MC: $${eventData.marketCap?.toLocaleString() || 'N/A'})`);
           }
         } catch (e) {
           // Could be Socket.IO control messages, which is normal
@@ -278,7 +292,7 @@ function testSingleTokenPrice(tokenMint) {
   if (priceSuccess) {
     try {
       const data = JSON.parse(priceResponse.body);
-      console.log(`💰 Price check: ${tokenMint.slice(0, 8)}...${tokenMint.slice(-8)} = $${data.priceUsd || 'N/A'}`);
+      console.log(`💰 Enhanced price check: ${tokenMint.slice(0, 8)}...${tokenMint.slice(-8)} - ${data.name || 'Unknown'} = $${data.priceUsd || 'N/A'} (MC: $${data.marketCap?.toLocaleString() || 'N/A'})`);
     } catch (e) {
       console.log(`⚠️  Price response parsing failed for ${tokenMint}`);
     }

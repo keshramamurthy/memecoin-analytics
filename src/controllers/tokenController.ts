@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/database.js';
 import { priceTrackingService } from '../services/priceTrackingService.js';
+import { metricService } from '../services/metricService.js';
 import { 
   PaginationSchema, 
   MetricsQuerySchema
@@ -52,9 +53,9 @@ export async function getTokenMetrics(req: Request, res: Response): Promise<void
     
     const { window } = MetricsQuerySchema.parse(req.query);
 
-    console.log(`Getting price data for token: ${mint}`);
+    console.log(`Getting comprehensive metrics for token: ${mint}`);
 
-    // Check if token is already tracked
+    // Check if token is already tracked and auto-discover if needed
     let tokenData = await priceTrackingService.getCurrentPrice(mint);
     
     if (!tokenData) {
@@ -64,27 +65,45 @@ export async function getTokenMetrics(req: Request, res: Response): Promise<void
       
       // Update the database with new token
       await priceTrackingService.updateTokenPrice(mint);
-      
-      // Get the stored data
-      tokenData = await priceTrackingService.getCurrentPrice(mint);
     }
 
-    if (!tokenData) {
-      res.status(404).json({ error: 'Failed to fetch token data' });
+    // Get comprehensive metrics including concentration ratio and velocity
+    const comprehensiveMetrics = await metricService.getTokenMetrics(mint, window);
+
+    res.json(comprehensiveMetrics);
+  } catch (error) {
+    console.error(`Error getting comprehensive metrics for ${req.params.mint}:`, error);
+    res.status(400).json({
+      error: error instanceof Error ? error.message : 'Invalid request',
+    });
+  }
+}
+
+export async function getTokenHolders(req: Request, res: Response): Promise<void> {
+  try {
+    const { mint } = req.params;
+    if (!mint) {
+      res.status(400).json({ error: 'Token mint is required' });
+      return;
+    }
+    
+    const limit = parseInt(req.query.limit as string) || 10;
+    if (limit > 100) {
+      res.status(400).json({ error: 'Limit cannot exceed 100' });
       return;
     }
 
+    console.log(`Getting top ${limit} holders for token: ${mint}`);
+
+    const topHolders = await metricService.getTopHolders(mint, limit);
+
     res.json({
-      tokenMint: tokenData.tokenMint,
-      priceUsd: tokenData.priceUsd,
-      priceInSol: tokenData.priceInSol,
-      marketCap: tokenData.marketCap,
-      totalSupply: tokenData.totalSupply,
-      lastUpdated: tokenData.timestamp,
-      window,
+      data: topHolders,
+      total: topHolders.length,
+      limit,
     });
   } catch (error) {
-    console.error(`Error getting price data for ${req.params.mint}:`, error);
+    console.error(`Error getting holders for ${req.params.mint}:`, error);
     res.status(400).json({
       error: error instanceof Error ? error.message : 'Invalid request',
     });

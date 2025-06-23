@@ -72,7 +72,7 @@ export class SocketService {
           console.log(`Token ${token} already being tracked`);
         }
         
-        // Send initial price data to the client
+        // Send initial price data to the client with market cap
         socket.emit('price_update', {
           tokenMint: tokenData.tokenMint,
           priceUsd: tokenData.priceUsd,
@@ -112,6 +112,7 @@ export class SocketService {
 
   private broadcastPriceUpdate(priceData: TokenPriceData): void {
     const room = `token:${priceData.tokenMint}`;
+    // Include market cap in real-time price updates
     this.io.of('/ws').to(room).emit('price_update', {
       tokenMint: priceData.tokenMint,
       priceUsd: priceData.priceUsd,
