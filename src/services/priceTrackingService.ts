@@ -242,14 +242,11 @@ export class PriceTrackingService {
   private async findPoolAddress(tokenMint: string, solMint: string): Promise<string | null> {
     const cacheKey = `pool_address:${tokenMint}:${solMint}`;
     
-    // Skip cache for our target token to force fresh search
-    if (tokenMint !== '9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump') {
-      const cached = await redis.get(cacheKey);
-      if (cached) {
-        const data = JSON.parse(cached);
-        if ((Date.now() - data.timestamp) < this.POOL_CACHE_TTL) {
-          return data.address;
-        }
+    const cached = await redis.get(cacheKey);
+    if (cached) {
+      const data = JSON.parse(cached);
+      if ((Date.now() - data.timestamp) < this.POOL_CACHE_TTL) {
+        return data.address;
       }
     }
 
@@ -257,12 +254,7 @@ export class PriceTrackingService {
       // Use efficient data slicing to get only baseMint and quoteMint
       const layoutAmm = struct([publicKey('baseMint'), publicKey('quoteMint')]);
       
-      console.log(`🔍 Searching for pool: ${tokenMint}/${solMint}`);
-      
-      // Special debug for the target token
-      if (tokenMint === '9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump') {
-        console.log('🎯 DEBUGGING TARGET TOKEN: 9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump');
-      }
+      console.log(`🔍 Searching for highest liquidity pool: ${tokenMint}/${solMint}`);
       
       // Get AMM V4 pools with data slicing for efficiency
       const ammPoolsData = await this.connection.getProgramAccounts(ALL_PROGRAM_ID.AMM_V4, {
@@ -273,34 +265,23 @@ export class PriceTrackingService {
       
       console.log(`Found ${ammPoolsData.length} AMM pools to search`);
       
-      // Find pool that contains our token pair
-      let foundPools = 0;
+      // Find all pools that contain our token pair and evaluate their liquidity
+      const matchingPools: Array<{address: string, baseMint: string, quoteMint: string}> = [];
+      
       for (const account of ammPoolsData) {
         try {
           const poolData = layoutAmm.decode(account.account.data);
           const baseMint = poolData.baseMint.toString();
           const quoteMint = poolData.quoteMint.toString();
           
-          // Debug: Check if this pool contains our token
-          if (baseMint === tokenMint || quoteMint === tokenMint) {
-            foundPools++;
-            console.log(`Pool ${foundPools}: ${account.pubkey.toString()} - Base: ${baseMint}, Quote: ${quoteMint}`);
-          }
-          
           // Check both possible arrangements: token/SOL or SOL/token
           if ((baseMint === tokenMint && quoteMint === solMint) ||
               (baseMint === solMint && quoteMint === tokenMint)) {
-            
-            const poolAddress = account.pubkey.toString();
-            console.log(`✅ Found matching pool: ${poolAddress} (Base: ${baseMint}, Quote: ${quoteMint})`);
-            
-            // Cache the result
-            await redis.setex(cacheKey, 300, JSON.stringify({ 
-              address: poolAddress, 
-              timestamp: Date.now() 
-            }));
-            
-            return poolAddress;
+            matchingPools.push({
+              address: account.pubkey.toString(),
+              baseMint,
+              quoteMint
+            });
           }
         } catch (e) {
           // Skip invalid accounts
@@ -308,14 +289,112 @@ export class PriceTrackingService {
         }
       }
       
-      console.log(`Found ${foundPools} pools containing token ${tokenMint}, but none paired with SOL`);
+      if (matchingPools.length === 0) {
+        console.log(`No pools found for ${tokenMint}/${solMint}`);
+        return null;
+      }
       
-      console.log(`No pool found for ${tokenMint}/${solMint}`);
+      console.log(`Found ${matchingPools.length} pools for ${tokenMint}/${solMint}`);
+      
+      // If only one pool, return it
+      if (matchingPools.length === 1) {
+        const poolAddress = matchingPools[0]!.address;
+        console.log(`✅ Found single pool: ${poolAddress}`);
+        
+        // Cache the result
+        await redis.setex(cacheKey, 300, JSON.stringify({ 
+          address: poolAddress, 
+          timestamp: Date.now() 
+        }));
+        
+        return poolAddress;
+      }
+      
+      // Multiple pools found - select the one with highest liquidity
+      const bestPool = await this.selectBestLiquidityPool(matchingPools, tokenMint);
+      
+      if (bestPool) {
+        console.log(`✅ Selected highest liquidity pool: ${bestPool} from ${matchingPools.length} options`);
+        
+        // Cache the result
+        await redis.setex(cacheKey, 300, JSON.stringify({ 
+          address: bestPool, 
+          timestamp: Date.now() 
+        }));
+        
+        return bestPool;
+      }
+      
+      console.log(`No suitable pool found for ${tokenMint}/${solMint}`);
       return null;
     } catch (error) {
       console.warn(`Failed to find pool address for ${tokenMint}/${solMint}:`, error);
       return null;
     }
+  }
+  
+  private async selectBestLiquidityPool(pools: Array<{address: string, baseMint: string, quoteMint: string}>, tokenMint: string): Promise<string | null> {
+    if (pools.length === 0) return null;
+    if (pools.length === 1) return pools[0]?.address || null;
+    
+    let bestPool: string | null = null;
+    let bestLiquidity = 0;
+    
+    for (const pool of pools) {
+      try {
+        // Get full pool data to evaluate liquidity
+        const poolAccountInfo = await this.connection.getAccountInfo(new PublicKey(pool.address));
+        if (!poolAccountInfo) continue;
+        
+        const poolData = liquidityStateV4Layout.decode(poolAccountInfo.data);
+        
+        // Determine which vault contains our token and which contains SOL
+        const isTokenBase = pool.baseMint === tokenMint;
+        const tokenVault = isTokenBase ? poolData.baseVault : poolData.quoteVault;
+        const solVault = isTokenBase ? poolData.quoteVault : poolData.baseVault;
+        
+        // Get vault balances to calculate liquidity
+        const [tokenVaultInfo, solVaultInfo] = await Promise.all([
+          this.connection.getParsedAccountInfo(tokenVault),
+          this.connection.getParsedAccountInfo(solVault)
+        ]);
+        
+        if (!tokenVaultInfo.value?.data || !solVaultInfo.value?.data) continue;
+        
+        const tokenVaultData = tokenVaultInfo.value.data as ParsedAccountData;
+        const solVaultData = solVaultInfo.value.data as ParsedAccountData;
+        
+        const tokenReserve = parseFloat(tokenVaultData.parsed.info.tokenAmount.amount);
+        const solReserve = parseFloat(solVaultData.parsed.info.tokenAmount.amount);
+        
+        // Calculate USD liquidity (SOL reserve * 2 * SOL price)
+        const solInTokens = solReserve / Math.pow(10, 9);
+        const liquidityUsd = solInTokens * 2 * 138; // Approximate SOL price
+        
+        console.log(`Pool ${pool.address}: $${liquidityUsd.toLocaleString()} liquidity (${solInTokens.toFixed(2)} SOL)`);
+        
+        // Skip pools with very low liquidity (likely launchpad pools)
+        if (liquidityUsd < 1000) { // Less than $1k liquidity
+          console.log(`Skipping low liquidity pool: ${pool.address}`);
+          continue;
+        }
+        
+        if (liquidityUsd > bestLiquidity) {
+          bestLiquidity = liquidityUsd;
+          bestPool = pool.address;
+        }
+        
+      } catch (error) {
+        console.warn(`Failed to evaluate pool ${pool.address}:`, error);
+        continue;
+      }
+    }
+    
+    if (bestPool) {
+      console.log(`Selected pool with highest liquidity: ${bestPool} ($${bestLiquidity.toLocaleString()})`);
+    }
+    
+    return bestPool;
   }
 
   private async getFullPoolInfo(poolId: PublicKey): Promise<any> {

@@ -130,7 +130,19 @@ export class DexScreenerService {
     for (const batch of batches) {
       try {
         await this.rateLimit();
-        const batchResults = await this.fetchBatchPrices(batch);
+        // Use single token API for better pair selection (gets all pairs, not just primary)
+        const batchResults: BatchTokenPriceResult[] = [];
+        for (const tokenMint of batch) {
+          try {
+            const singleResult = await this.fetchSingleTokenPrice(tokenMint);
+            if (singleResult) {
+              batchResults.push(singleResult);
+            }
+            await new Promise(resolve => setTimeout(resolve, 200)); // Rate limiting
+          } catch (error) {
+            console.warn(`Failed to fetch ${tokenMint}:`, error);
+          }
+        }
         
         // Cache each result
         for (const result of batchResults) {
@@ -219,6 +231,9 @@ export class DexScreenerService {
   private processPairsResponse(pairs: DexScreenerPair[], requestedTokens: string[]): BatchTokenPriceResult[] {
     const results: BatchTokenPriceResult[] = [];
     
+    console.log(`🔬 processPairsResponse: ${pairs.length} pairs received, ${requestedTokens.length} tokens requested`);
+    pairs.forEach(p => console.log(`  Received pair: ${p.dexId} - $${p.priceUsd} (${p.baseToken.address}/${p.quoteToken.address})`));
+    
     // Group pairs by token mint for processing
     const tokenPairsMap = new Map<string, DexScreenerPair[]>();
     
@@ -238,7 +253,9 @@ export class DexScreenerService {
     }
     
     // Process each token's pairs
+    console.log(`📊 Processing ${tokenPairsMap.size} tokens from DexScreener response`);
     for (const [tokenMint, tokenPairs] of tokenPairsMap) {
+      console.log(`🎯 Processing token ${tokenMint}: ${tokenPairs.length} pairs found`);
       // Find the best pair for this token (prefer SOL pairs, then USDC, then highest liquidity)
       const bestPair = this.selectBestPair(tokenPairs, tokenMint);
       
@@ -255,39 +272,168 @@ export class DexScreenerService {
   }
 
   private selectBestPair(pairs: DexScreenerPair[], tokenMint: string): DexScreenerPair | null {
+    console.log(`🔍 Selecting best pair for ${tokenMint}: ${pairs.length} pairs available`);
+    pairs.forEach(p => console.log(`  Available: ${p.dexId} - $${p.priceUsd} (L: $${p.liquidity?.usd || 0})`));
+    
     if (pairs.length === 0) return null;
-    if (pairs.length === 1) return pairs[0] || null;
+    if (pairs.length === 1) {
+      console.log(`⚠️  Only 1 pair available, using: ${pairs[0]?.dexId}`);
+      return pairs[0] || null;
+    }
     
     const solMint = 'So11111111111111111111111111111111111111112';
     const usdcMint = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    const wsolMint = 'So11111111111111111111111111111111111111112'; // Wrapped SOL
     
-    // Priority: SOL pairs > USDC pairs > highest liquidity
-    let solPairs = pairs.filter(p => 
-      (p.baseToken.address === tokenMint && p.quoteToken.address === solMint) ||
-      (p.baseToken.address === solMint && p.quoteToken.address === tokenMint)
-    );
+    // Filter out low-quality pairs (launchpad pools, very low liquidity)
+    const MIN_LIQUIDITY_USD = 500; // Minimum $500 liquidity
+    const MIN_VOLUME_24H = 100; // Minimum $100 volume in 24h
     
-    if (solPairs.length > 0) {
-      return solPairs.reduce((best, current) => 
+    console.log(`\n🔍 Filtering ${pairs.length} pairs for token ${tokenMint}:`);
+    const qualityPairs = pairs.filter(p => {
+      const liquidityUsd = p.liquidity?.usd || 0;
+      const volume24h = p.volume?.['24h'] || 0;
+      
+      console.log(`  ${p.dexId}: L=$${liquidityUsd.toFixed(2)} V=$${volume24h.toFixed(2)} Price=$${p.priceUsd}`);
+      
+      // Be very strict with suspected launchpad/pump pools first
+      const dexIdLower = p.dexId.toLowerCase();
+      const isLaunchpad = dexIdLower.includes('pump') || 
+                         dexIdLower.includes('launch') ||
+                         dexIdLower.includes('lab') ||
+                         dexIdLower === 'launchlab' ||
+                         p.pairAddress.includes('pump');
+      
+      if (isLaunchpad) {
+        // Require substantial trading activity for launchpad pools
+        const hasHighVolume = volume24h > 1000; // $1k+ volume
+        const hasHighLiquidity = liquidityUsd > 5000; // $5k+ liquidity
+        
+        if (!hasHighVolume || !hasHighLiquidity) {
+          console.log(`    ❌ Filtering out launchpad ${p.dexId}: V=$${volume24h} L=$${liquidityUsd}`);
+          return false;
+        }
+      }
+      
+      // For established DEXes, be more lenient with volume requirements
+      const isEstablishedDex = ['raydium', 'orca', 'jupiter', 'meteora'].some(dex => 
+        p.dexId.toLowerCase().includes(dex)
+      );
+      
+      if (isEstablishedDex) {
+        // Only require minimum liquidity for established DEXes (allow zero volume)
+        if (liquidityUsd < MIN_LIQUIDITY_USD) {
+          console.log(`Filtering out established DEX ${p.dexId}: low liquidity $${liquidityUsd}`);
+          return false;
+        }
+      } else {
+        // For unknown DEXes, require both volume and liquidity
+        if (volume24h < MIN_VOLUME_24H || liquidityUsd < MIN_LIQUIDITY_USD) {
+          console.log(`Filtering out unknown DEX ${p.dexId}: V=$${volume24h} L=$${liquidityUsd}`);
+          return false;
+        }
+      }
+      
+      return true;
+    });
+    
+    if (qualityPairs.length === 0) {
+      console.warn(`No quality pairs found for ${tokenMint}, using highest liquidity available`);
+      return pairs.reduce((best, current) => 
         (current.liquidity?.usd || 0) > (best.liquidity?.usd || 0) ? current : best
       );
     }
     
-    let usdcPairs = pairs.filter(p => 
+    // Prioritize established DEXes (Raydium, Orca, Jupiter)
+    const establishedDexes = ['raydium', 'orca', 'jupiter', 'aldrin', 'saber'];
+    let establishedPairs = qualityPairs.filter(p => 
+      establishedDexes.some(dex => p.dexId.toLowerCase().includes(dex))
+    );
+    
+    // If no established DEX pairs, use all quality pairs
+    if (establishedPairs.length === 0) {
+      establishedPairs = qualityPairs;
+    }
+    
+    // Priority: SOL pairs > USDC pairs > highest liquidity within established DEXes
+    let solPairs = establishedPairs.filter(p => 
+      (p.baseToken.address === tokenMint && (p.quoteToken.address === solMint || p.quoteToken.address === wsolMint)) ||
+      ((p.baseToken.address === solMint || p.baseToken.address === wsolMint) && p.quoteToken.address === tokenMint)
+    );
+    
+    if (solPairs.length > 0) {
+      const bestSolPair = solPairs.reduce((best, current) => {
+        const currentScore = this.calculatePairScore(current);
+        const bestScore = this.calculatePairScore(best);
+        return currentScore > bestScore ? current : best;
+      });
+      console.log(`Selected SOL pair for ${tokenMint}: ${bestSolPair.dexId} with $${bestSolPair.liquidity?.usd?.toLocaleString() || 0} liquidity`);
+      return bestSolPair;
+    }
+    
+    let usdcPairs = establishedPairs.filter(p => 
       (p.baseToken.address === tokenMint && p.quoteToken.address === usdcMint) ||
       (p.baseToken.address === usdcMint && p.quoteToken.address === tokenMint)
     );
     
     if (usdcPairs.length > 0) {
-      return usdcPairs.reduce((best, current) => 
-        (current.liquidity?.usd || 0) > (best.liquidity?.usd || 0) ? current : best
-      );
+      const bestUsdcPair = usdcPairs.reduce((best, current) => {
+        const currentScore = this.calculatePairScore(current);
+        const bestScore = this.calculatePairScore(best);
+        return currentScore > bestScore ? current : best;
+      });
+      console.log(`Selected USDC pair for ${tokenMint}: ${bestUsdcPair.dexId} with $${bestUsdcPair.liquidity?.usd?.toLocaleString() || 0} liquidity`);
+      return bestUsdcPair;
     }
     
-    // Return highest liquidity pair
-    return pairs.reduce((best, current) => 
-      (current.liquidity?.usd || 0) > (best.liquidity?.usd || 0) ? current : best
-    );
+    // Return highest scoring pair from established DEXes
+    const bestPair = establishedPairs.reduce((best, current) => {
+      const currentScore = this.calculatePairScore(current);
+      const bestScore = this.calculatePairScore(best);
+      return currentScore > bestScore ? current : best;
+    });
+    
+    console.log(`Selected best pair for ${tokenMint}: ${bestPair.dexId} with $${bestPair.liquidity?.usd?.toLocaleString() || 0} liquidity`);
+    return bestPair;
+  }
+  
+  private calculatePairScore(pair: DexScreenerPair): number {
+    const liquidityUsd = pair.liquidity?.usd || 0;
+    const volume24h = pair.volume?.['24h'] || 0;
+    const txnsBuys = pair.txns?.['24h']?.buys || 0;
+    const txnsSells = pair.txns?.['24h']?.sells || 0;
+    const totalTxns = txnsBuys + txnsSells;
+    
+    // Adjusted scoring: prioritize trading activity over pure liquidity
+    const liquidityScore = liquidityUsd * 0.3; // Reduced from 70%
+    const volumeScore = volume24h * 0.4; // Increased from 20%
+    const txnScore = totalTxns * 200 * 0.3; // Increased from 10% and higher weight
+    
+    // Strong bonus for established DEXes (prefer even with lower liquidity)
+    const establishedDexes = ['raydium', 'orca', 'jupiter'];
+    const dexBonus = establishedDexes.some(dex => pair.dexId.toLowerCase().includes(dex)) ? 50000 : 0;
+    
+    // Heavy penalty for pump.fun and launchpad pools (they trap liquidity)
+    let launchpadPenalty = 0;
+    if (pair.dexId.toLowerCase().includes('pump') || 
+        pair.dexId.toLowerCase().includes('launch') ||
+        pair.pairAddress.includes('pump')) {
+      // Heavy penalty unless it has massive volume indicating real trading
+      launchpadPenalty = volume24h > 100000 ? -10000 : -100000; // $100k+ volume needed
+    }
+    
+    // Bonus for pairs with good volume-to-liquidity ratio (active trading)
+    const volumeToLiquidityRatio = liquidityUsd > 0 ? volume24h / liquidityUsd : 0;
+    const activityBonus = volumeToLiquidityRatio > 0.1 ? 15000 : 0; // 10%+ turnover rate
+    
+    // Bonus for recent trading activity
+    const recentActivityBonus = totalTxns > 50 ? 5000 : 0; // 50+ transactions in 24h
+    
+    const finalScore = liquidityScore + volumeScore + txnScore + dexBonus + launchpadPenalty + activityBonus + recentActivityBonus;
+    
+    console.log(`Pair ${pair.dexId} score: ${finalScore.toFixed(0)} (L:${liquidityScore.toFixed(0)} V:${volumeScore.toFixed(0)} T:${txnScore.toFixed(0)} DEX:${dexBonus} LP:${launchpadPenalty} A:${activityBonus})`);
+    
+    return finalScore;
   }
 
   private convertPairToResult(pair: DexScreenerPair, tokenMint: string): BatchTokenPriceResult | null {
