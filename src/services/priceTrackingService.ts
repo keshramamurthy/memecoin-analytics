@@ -10,7 +10,7 @@ import {
   struct,
   publicKey,
 } from '@raydium-io/raydium-sdk-v2';
-import { raydiumApiService } from './raydiumApiService.js';
+import { dexScreenerService } from './dexScreenerService.js';
 
 export interface TokenPriceData {
   tokenMint: string;
@@ -72,6 +72,77 @@ export class PriceTrackingService {
     return tokenPriceData;
   }
 
+  async getBatchTokenPrices(tokenMints: string[]): Promise<TokenPriceData[]> {
+    if (tokenMints.length === 0) return [];
+
+    try {
+      // Get batch prices from DexScreener (more efficient)
+      const [dexScreenerResults, solPriceUsd] = await Promise.all([
+        dexScreenerService.getBatchTokenPrices(tokenMints),
+        this.getSolPriceUsd()
+      ]);
+
+      // Create a map for quick lookup
+      const dexScreenerMap = new Map(
+        dexScreenerResults.map(result => [result.tokenMint, result])
+      );
+
+      // Get token supplies for all tokens that need them
+      const tokenSupplies = await Promise.all(
+        tokenMints.map(tokenMint => this.getTokenSupply(tokenMint))
+      );
+
+      const results: TokenPriceData[] = [];
+
+      for (let i = 0; i < tokenMints.length; i++) {
+        const tokenMint = tokenMints[i];
+        if (!tokenMint) continue;
+        
+        const totalSupply = tokenSupplies[i];
+        const dexResult = dexScreenerMap.get(tokenMint);
+
+        if (dexResult && tokenMint && totalSupply !== undefined) {
+          // Use DexScreener data directly
+          const tokenPriceData: TokenPriceData = {
+            tokenMint,
+            priceUsd: dexResult.priceUsd,
+            priceInSol: dexResult.priceInSol,
+            marketCap: dexResult.marketCap || (dexResult.priceUsd * totalSupply),
+            totalSupply,
+            timestamp: Date.now(),
+          };
+          results.push(tokenPriceData);
+        } else {
+          // Fallback to individual pricing for tokens not found by DexScreener
+          if (tokenMint) {
+            try {
+              const fallbackPrice = await this.getTokenPrice(tokenMint);
+              results.push(fallbackPrice);
+            } catch (error) {
+              console.warn(`Failed to get fallback price for ${tokenMint}:`, error);
+            }
+          }
+        }
+      }
+
+      return results;
+    } catch (error) {
+      console.warn('Batch pricing failed, falling back to individual requests:', error);
+      
+      // Fallback to individual requests
+      const results: TokenPriceData[] = [];
+      for (const tokenMint of tokenMints) {
+        try {
+          const tokenPrice = await this.getTokenPrice(tokenMint);
+          results.push(tokenPrice);
+        } catch (error) {
+          console.warn(`Failed to get individual price for ${tokenMint}:`, error);
+        }
+      }
+      return results;
+    }
+  }
+
   private async getTokenPriceInSolOptimized(tokenMint: string): Promise<number> {
     try {
       const solMint = 'So11111111111111111111111111111111111111112';
@@ -91,17 +162,17 @@ export class PriceTrackingService {
         }
       }
 
-      // Try Raydium API first (most reliable)
+      // Try DexScreener API first (most reliable)
       try {
-        const raydiumPrice = await raydiumApiService.getTokenPriceFromRaydium(tokenMint);
-        if (raydiumPrice && raydiumPrice > 0) {
-          console.log(`✅ Got price from Raydium API for ${tokenMint}: ${raydiumPrice} SOL`);
+        const dexScreenerResult = await dexScreenerService.getTokenPrice(tokenMint);
+        if (dexScreenerResult && dexScreenerResult.priceInSol > 0) {
+          console.log(`✅ Got price from DexScreener for ${tokenMint}: ${dexScreenerResult.priceInSol} SOL ($${dexScreenerResult.priceUsd})`);
           // Cache the result
-          await redis.setex(cacheKey, 1, JSON.stringify({ price: raydiumPrice, timestamp: Date.now() }));
-          return raydiumPrice;
+          await redis.setex(cacheKey, 1, JSON.stringify({ price: dexScreenerResult.priceInSol, timestamp: Date.now() }));
+          return dexScreenerResult.priceInSol;
         }
       } catch (error) {
-        console.warn(`Raydium API pricing failed for ${tokenMint}, falling back to RPC`, error);
+        console.warn(`DexScreener pricing failed for ${tokenMint}, falling back to RPC`, error);
       }
 
       // Fallback to direct RPC pool pricing
@@ -351,18 +422,18 @@ export class PriceTrackingService {
         return this.solPriceCache.price;
       }
 
-      // Try Raydium API first for SOL price
+      // Try DexScreener API first for SOL price
       try {
-        const raydiumSolPrice = await raydiumApiService.getSolPriceUsd();
-        if (raydiumSolPrice && raydiumSolPrice > 0) {
-          console.log(`✅ Got SOL price from Raydium API: $${raydiumSolPrice}`);
+        const dexScreenerSolPrice = await dexScreenerService.getSolPriceUsd();
+        if (dexScreenerSolPrice && dexScreenerSolPrice > 0) {
+          console.log(`✅ Got SOL price from DexScreener: $${dexScreenerSolPrice}`);
           // Update both caches
-          this.solPriceCache = { price: raydiumSolPrice, timestamp: now };
-          await redis.setex(cacheKey, 30, JSON.stringify({ price: raydiumSolPrice, timestamp: now }));
-          return raydiumSolPrice;
+          this.solPriceCache = { price: dexScreenerSolPrice, timestamp: now };
+          await redis.setex(cacheKey, 30, JSON.stringify({ price: dexScreenerSolPrice, timestamp: now }));
+          return dexScreenerSolPrice;
         }
       } catch (error) {
-        console.warn('Raydium API SOL price failed, falling back to on-chain:', error);
+        console.warn('DexScreener SOL price failed, falling back to on-chain:', error);
       }
 
       // Fallback to on-chain SOL price from USDC/SOL pool
