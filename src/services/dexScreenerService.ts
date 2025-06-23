@@ -67,7 +67,7 @@ export class DexScreenerService {
   private static instance: DexScreenerService;
   private readonly baseUrl = 'https://api.dexscreener.com';
   private readonly chainId = 'solana';
-  private readonly CACHE_TTL = 5; // 5 second cache
+  private readonly CACHE_TTL = 3; // 3 second cache
   private readonly BATCH_SIZE = 30; // DexScreener allows up to 30 addresses per request
   private readonly RATE_LIMIT_DELAY = 200; // 200ms between requests (5 req/sec max)
   private lastRequestTime = 0;
