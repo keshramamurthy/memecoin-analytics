@@ -3,6 +3,7 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import { prisma } from '../config/database.js';
 import { redis, redisPublisher } from '../config/redis.js';
 import { env } from '../config/env.js';
+import { SOL_PRICE_FALLBACK } from '../config/constants.js';
 import { AccountInfo, ParsedAccountData } from '@solana/web3.js';
 import {
   ALL_PROGRAM_ID,
@@ -32,14 +33,11 @@ export class PriceTrackingService {
   private constructor() {
     // Use Helius RPC endpoint for better performance and reliability
     const heliusRpcUrl = `https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY}`;
-    this.connection = new Connection(
-      heliusRpcUrl,
-      { 
-        commitment: 'confirmed', 
-        disableRetryOnRateLimit: true,
-        httpHeaders: { 'User-Agent': 'memecoin-analytics/1.0' }
-      }
-    );
+    this.connection = new Connection(heliusRpcUrl, {
+      commitment: 'confirmed',
+      disableRetryOnRateLimit: true,
+      httpHeaders: { 'User-Agent': 'memecoin-analytics/1.0' },
+    });
   }
 
   static getInstance(): PriceTrackingService {
@@ -51,7 +49,8 @@ export class PriceTrackingService {
 
   async getTokenPrice(tokenMint: string): Promise<TokenPriceData> {
     // Validate token mint first
-    const validation = await tokenValidationService.validateTokenMint(tokenMint);
+    const validation =
+      await tokenValidationService.validateTokenMint(tokenMint);
     if (!validation.isValid) {
       throw new Error(`Invalid token mint: ${validation.reason}`);
     }
@@ -60,9 +59,9 @@ export class PriceTrackingService {
     const [totalSupply, priceInSol, solPriceUsd] = await Promise.all([
       this.getTokenSupply(tokenMint),
       this.getTokenPriceInSolOptimized(tokenMint),
-      this.getSolPriceUsd()
+      this.getSolPriceUsd(),
     ]);
-    
+
     // Calculate USD price and market cap
     const priceUsd = priceInSol * solPriceUsd;
     const marketCap = priceUsd * totalSupply;
@@ -84,9 +83,10 @@ export class PriceTrackingService {
 
     try {
       // Validate all tokens first and filter out invalid ones
-      const validationResults = await tokenValidationService.validateAndCleanupBatch(tokenMints);
+      const validationResults =
+        await tokenValidationService.validateAndCleanupBatch(tokenMints);
       const validTokenMints = validationResults.valid;
-      
+
       if (validTokenMints.length === 0) {
         console.log('No valid tokens to process in batch');
         return [];
@@ -95,17 +95,17 @@ export class PriceTrackingService {
       // Get batch prices from DexScreener (more efficient) - only for valid tokens
       const [dexScreenerResults, solPriceUsd] = await Promise.all([
         dexScreenerService.getBatchTokenPrices(validTokenMints),
-        this.getSolPriceUsd()
+        this.getSolPriceUsd(),
       ]);
 
       // Create a map for quick lookup
       const dexScreenerMap = new Map(
-        dexScreenerResults.map(result => [result.tokenMint, result])
+        dexScreenerResults.map((result) => [result.tokenMint, result])
       );
 
       // Get token supplies for all valid tokens that need them
       const tokenSupplies = await Promise.all(
-        validTokenMints.map(tokenMint => this.getTokenSupply(tokenMint))
+        validTokenMints.map((tokenMint) => this.getTokenSupply(tokenMint))
       );
 
       const results: TokenPriceData[] = [];
@@ -113,7 +113,7 @@ export class PriceTrackingService {
       for (let i = 0; i < validTokenMints.length; i++) {
         const tokenMint = validTokenMints[i];
         if (!tokenMint) continue;
-        
+
         const totalSupply = tokenSupplies[i];
         const dexResult = dexScreenerMap.get(tokenMint);
 
@@ -123,7 +123,7 @@ export class PriceTrackingService {
             tokenMint,
             priceUsd: dexResult.priceUsd,
             priceInSol: dexResult.priceInSol,
-            marketCap: dexResult.marketCap || (dexResult.priceUsd * totalSupply),
+            marketCap: dexResult.marketCap || dexResult.priceUsd * totalSupply,
             totalSupply,
             timestamp: Date.now(),
           };
@@ -135,7 +135,10 @@ export class PriceTrackingService {
               const fallbackPrice = await this.getTokenPrice(tokenMint);
               results.push(fallbackPrice);
             } catch (error) {
-              console.warn(`Failed to get fallback price for ${tokenMint}:`, error);
+              console.warn(
+                `Failed to get fallback price for ${tokenMint}:`,
+                error
+              );
             }
           }
         }
@@ -143,28 +146,37 @@ export class PriceTrackingService {
 
       return results;
     } catch (error) {
-      console.warn('Batch pricing failed, falling back to individual requests:', error);
-      
+      console.warn(
+        'Batch pricing failed, falling back to individual requests:',
+        error
+      );
+
       // Fallback to individual requests for valid tokens only
       const results: TokenPriceData[] = [];
-      const validationResults = await tokenValidationService.validateAndCleanupBatch(tokenMints);
-      
+      const validationResults =
+        await tokenValidationService.validateAndCleanupBatch(tokenMints);
+
       for (const tokenMint of validationResults.valid) {
         try {
           const tokenPrice = await this.getTokenPrice(tokenMint);
           results.push(tokenPrice);
         } catch (error) {
-          console.warn(`Failed to get individual price for ${tokenMint}:`, error);
+          console.warn(
+            `Failed to get individual price for ${tokenMint}:`,
+            error
+          );
         }
       }
       return results;
     }
   }
 
-  private async getTokenPriceInSolOptimized(tokenMint: string): Promise<number> {
+  private async getTokenPriceInSolOptimized(
+    tokenMint: string
+  ): Promise<number> {
     try {
       const solMint = 'So11111111111111111111111111111111111111112';
-      
+
       // If token is SOL itself, return 1
       if (tokenMint === solMint) {
         return 1;
@@ -175,31 +187,51 @@ export class PriceTrackingService {
       const cached = await redis.get(cacheKey);
       if (cached) {
         const data = JSON.parse(cached);
-        if ((Date.now() - data.timestamp) < 5000) { // 5 second cache for better performance under load
+        if (Date.now() - data.timestamp < 5000) {
+          // 5 second cache for better performance under load
           return data.price;
         }
       }
 
       // Try DexScreener API first (most reliable)
       try {
-        const dexScreenerResult = await dexScreenerService.getTokenPrice(tokenMint);
+        const dexScreenerResult =
+          await dexScreenerService.getTokenPrice(tokenMint);
         if (dexScreenerResult && dexScreenerResult.priceInSol > 0) {
-          console.log(`✅ Got price from DexScreener for ${tokenMint}: ${dexScreenerResult.priceInSol} SOL ($${dexScreenerResult.priceUsd})`);
+          console.log(
+            `✅ Got price from DexScreener for ${tokenMint}: ${dexScreenerResult.priceInSol} SOL ($${dexScreenerResult.priceUsd})`
+          );
           // Cache the result for longer under load
-          await redis.setex(cacheKey, 5, JSON.stringify({ price: dexScreenerResult.priceInSol, timestamp: Date.now() }));
+          await redis.setex(
+            cacheKey,
+            5,
+            JSON.stringify({
+              price: dexScreenerResult.priceInSol,
+              timestamp: Date.now(),
+            })
+          );
           return dexScreenerResult.priceInSol;
         }
       } catch (error) {
-        console.warn(`DexScreener pricing failed for ${tokenMint}, falling back to RPC`, error);
+        console.warn(
+          `DexScreener pricing failed for ${tokenMint}, falling back to RPC`,
+          error
+        );
       }
 
       // Fallback to direct RPC pool pricing
       try {
         const poolPrice = await this.getTokenPriceFromPool(tokenMint, solMint);
         if (poolPrice > 0) {
-          console.log(`✅ Got price from RPC for ${tokenMint}: ${poolPrice} SOL`);
+          console.log(
+            `✅ Got price from RPC for ${tokenMint}: ${poolPrice} SOL`
+          );
           // Cache the result for longer under load
-          await redis.setex(cacheKey, 5, JSON.stringify({ price: poolPrice, timestamp: Date.now() }));
+          await redis.setex(
+            cacheKey,
+            5,
+            JSON.stringify({ price: poolPrice, timestamp: Date.now() })
+          );
           return poolPrice;
         }
       } catch (error) {
@@ -208,14 +240,16 @@ export class PriceTrackingService {
 
       // No valid price found
       throw new Error('All pricing methods failed');
-      
     } catch (error) {
       console.warn(`Failed to get ${tokenMint}/SOL price:`, error);
       return 0;
     }
   }
 
-  private async getTokenPriceFromPool(tokenMint: string, solMint: string): Promise<number> {
+  private async getTokenPriceFromPool(
+    tokenMint: string,
+    solMint: string
+  ): Promise<number> {
     try {
       // Find pool address using RPC calls
       const poolAddress = await this.findPoolAddress(tokenMint, solMint);
@@ -224,14 +258,20 @@ export class PriceTrackingService {
       }
 
       // Get pool account data directly from Solana RPC
-      const poolAccountInfo = await this.connection.getAccountInfo(new PublicKey(poolAddress));
+      const poolAccountInfo = await this.connection.getAccountInfo(
+        new PublicKey(poolAddress)
+      );
       if (!poolAccountInfo) {
         throw new Error('Pool account not found');
       }
 
       // Parse pool data and calculate price
-      const price = await this.calculatePriceFromPoolData(poolAccountInfo, tokenMint, solMint);
-      
+      const price = await this.calculatePriceFromPoolData(
+        poolAccountInfo,
+        tokenMint,
+        solMint
+      );
+
       return price;
     } catch (error) {
       console.warn(`RPC pool pricing failed for ${tokenMint}:`, error);
@@ -239,13 +279,16 @@ export class PriceTrackingService {
     }
   }
 
-  private async findPoolAddress(tokenMint: string, solMint: string): Promise<string | null> {
+  private async findPoolAddress(
+    tokenMint: string,
+    solMint: string
+  ): Promise<string | null> {
     const cacheKey = `pool_address:${tokenMint}:${solMint}`;
-    
+
     const cached = await redis.get(cacheKey);
     if (cached) {
       const data = JSON.parse(cached);
-      if ((Date.now() - data.timestamp) < this.POOL_CACHE_TTL) {
+      if (Date.now() - data.timestamp < this.POOL_CACHE_TTL) {
         return data.address;
       }
     }
@@ -253,34 +296,48 @@ export class PriceTrackingService {
     try {
       // Use efficient data slicing to get only baseMint and quoteMint
       const layoutAmm = struct([publicKey('baseMint'), publicKey('quoteMint')]);
-      
-      console.log(`🔍 Searching for highest liquidity pool: ${tokenMint}/${solMint}`);
-      
+
+      console.log(
+        `🔍 Searching for highest liquidity pool: ${tokenMint}/${solMint}`
+      );
+
       // Get AMM V4 pools with data slicing for efficiency
-      const ammPoolsData = await this.connection.getProgramAccounts(ALL_PROGRAM_ID.AMM_V4, {
-        filters: [{ dataSize: liquidityStateV4Layout.span }],
-        dataSlice: { offset: liquidityStateV4Layout.offsetOf('baseMint'), length: 64 },
-        encoding: 'base64' as any,
-      });
-      
+      const ammPoolsData = await this.connection.getProgramAccounts(
+        ALL_PROGRAM_ID.AMM_V4,
+        {
+          filters: [{ dataSize: liquidityStateV4Layout.span }],
+          dataSlice: {
+            offset: liquidityStateV4Layout.offsetOf('baseMint'),
+            length: 64,
+          },
+          encoding: 'base64' as any,
+        }
+      );
+
       console.log(`Found ${ammPoolsData.length} AMM pools to search`);
-      
+
       // Find all pools that contain our token pair and evaluate their liquidity
-      const matchingPools: Array<{address: string, baseMint: string, quoteMint: string}> = [];
-      
+      const matchingPools: Array<{
+        address: string;
+        baseMint: string;
+        quoteMint: string;
+      }> = [];
+
       for (const account of ammPoolsData) {
         try {
           const poolData = layoutAmm.decode(account.account.data);
           const baseMint = poolData.baseMint.toString();
           const quoteMint = poolData.quoteMint.toString();
-          
+
           // Check both possible arrangements: token/SOL or SOL/token
-          if ((baseMint === tokenMint && quoteMint === solMint) ||
-              (baseMint === solMint && quoteMint === tokenMint)) {
+          if (
+            (baseMint === tokenMint && quoteMint === solMint) ||
+            (baseMint === solMint && quoteMint === tokenMint)
+          ) {
             matchingPools.push({
               address: account.pubkey.toString(),
               baseMint,
-              quoteMint
+              quoteMint,
             });
           }
         } catch (e) {
@@ -288,112 +345,145 @@ export class PriceTrackingService {
           continue;
         }
       }
-      
+
       if (matchingPools.length === 0) {
         console.log(`No pools found for ${tokenMint}/${solMint}`);
         return null;
       }
-      
-      console.log(`Found ${matchingPools.length} pools for ${tokenMint}/${solMint}`);
-      
+
+      console.log(
+        `Found ${matchingPools.length} pools for ${tokenMint}/${solMint}`
+      );
+
       // If only one pool, return it
       if (matchingPools.length === 1) {
         const poolAddress = matchingPools[0]!.address;
         console.log(`✅ Found single pool: ${poolAddress}`);
-        
+
         // Cache the result
-        await redis.setex(cacheKey, 300, JSON.stringify({ 
-          address: poolAddress, 
-          timestamp: Date.now() 
-        }));
-        
+        await redis.setex(
+          cacheKey,
+          300,
+          JSON.stringify({
+            address: poolAddress,
+            timestamp: Date.now(),
+          })
+        );
+
         return poolAddress;
       }
-      
+
       // Multiple pools found - select the one with highest liquidity
-      const bestPool = await this.selectBestLiquidityPool(matchingPools, tokenMint);
-      
+      const bestPool = await this.selectBestLiquidityPool(
+        matchingPools,
+        tokenMint
+      );
+
       if (bestPool) {
-        console.log(`✅ Selected highest liquidity pool: ${bestPool} from ${matchingPools.length} options`);
-        
+        console.log(
+          `✅ Selected highest liquidity pool: ${bestPool} from ${matchingPools.length} options`
+        );
+
         // Cache the result
-        await redis.setex(cacheKey, 300, JSON.stringify({ 
-          address: bestPool, 
-          timestamp: Date.now() 
-        }));
-        
+        await redis.setex(
+          cacheKey,
+          300,
+          JSON.stringify({
+            address: bestPool,
+            timestamp: Date.now(),
+          })
+        );
+
         return bestPool;
       }
-      
+
       console.log(`No suitable pool found for ${tokenMint}/${solMint}`);
       return null;
     } catch (error) {
-      console.warn(`Failed to find pool address for ${tokenMint}/${solMint}:`, error);
+      console.warn(
+        `Failed to find pool address for ${tokenMint}/${solMint}:`,
+        error
+      );
       return null;
     }
   }
-  
-  private async selectBestLiquidityPool(pools: Array<{address: string, baseMint: string, quoteMint: string}>, tokenMint: string): Promise<string | null> {
+
+  private async selectBestLiquidityPool(
+    pools: Array<{ address: string; baseMint: string; quoteMint: string }>,
+    tokenMint: string
+  ): Promise<string | null> {
     if (pools.length === 0) return null;
     if (pools.length === 1) return pools[0]?.address || null;
-    
+
     let bestPool: string | null = null;
     let bestLiquidity = 0;
-    
+
     for (const pool of pools) {
       try {
         // Get full pool data to evaluate liquidity
-        const poolAccountInfo = await this.connection.getAccountInfo(new PublicKey(pool.address));
+        const poolAccountInfo = await this.connection.getAccountInfo(
+          new PublicKey(pool.address)
+        );
         if (!poolAccountInfo) continue;
-        
+
         const poolData = liquidityStateV4Layout.decode(poolAccountInfo.data);
-        
+
         // Determine which vault contains our token and which contains SOL
         const isTokenBase = pool.baseMint === tokenMint;
-        const tokenVault = isTokenBase ? poolData.baseVault : poolData.quoteVault;
+        const tokenVault = isTokenBase
+          ? poolData.baseVault
+          : poolData.quoteVault;
         const solVault = isTokenBase ? poolData.quoteVault : poolData.baseVault;
-        
+
         // Get vault balances to calculate liquidity
         const [tokenVaultInfo, solVaultInfo] = await Promise.all([
           this.connection.getParsedAccountInfo(tokenVault),
-          this.connection.getParsedAccountInfo(solVault)
+          this.connection.getParsedAccountInfo(solVault),
         ]);
-        
+
         if (!tokenVaultInfo.value?.data || !solVaultInfo.value?.data) continue;
-        
+
         const tokenVaultData = tokenVaultInfo.value.data as ParsedAccountData;
         const solVaultData = solVaultInfo.value.data as ParsedAccountData;
-        
-        const tokenReserve = parseFloat(tokenVaultData.parsed.info.tokenAmount.amount);
-        const solReserve = parseFloat(solVaultData.parsed.info.tokenAmount.amount);
-        
+
+        const tokenReserve = parseFloat(
+          tokenVaultData.parsed.info.tokenAmount.amount
+        );
+        const solReserve = parseFloat(
+          solVaultData.parsed.info.tokenAmount.amount
+        );
+
         // Calculate USD liquidity (SOL reserve * 2 * SOL price)
         const solInTokens = solReserve / Math.pow(10, 9);
-        const liquidityUsd = solInTokens * 2 * 138; // Approximate SOL price
-        
-        console.log(`Pool ${pool.address}: $${liquidityUsd.toLocaleString()} liquidity (${solInTokens.toFixed(2)} SOL)`);
-        
+        const liquidityUsd = solInTokens * 2 * SOL_PRICE_FALLBACK;
+
+        console.log(
+          `Pool ${pool.address}: $${liquidityUsd.toLocaleString()} liquidity (${solInTokens.toFixed(2)} SOL)`
+        );
+
         // Skip pools with very low liquidity (likely launchpad pools)
-        if (liquidityUsd < 1000) { // Less than $1k liquidity
+        if (liquidityUsd < 1000) {
+          // Less than $1k liquidity
           console.log(`Skipping low liquidity pool: ${pool.address}`);
           continue;
         }
-        
+
         if (liquidityUsd > bestLiquidity) {
           bestLiquidity = liquidityUsd;
           bestPool = pool.address;
         }
-        
       } catch (error) {
         console.warn(`Failed to evaluate pool ${pool.address}:`, error);
         continue;
       }
     }
-    
+
     if (bestPool) {
-      console.log(`Selected pool with highest liquidity: ${bestPool} ($${bestLiquidity.toLocaleString()})`);
+      console.log(
+        `Selected pool with highest liquidity: ${bestPool} ($${bestLiquidity.toLocaleString()})`
+      );
     }
-    
+
     return bestPool;
   }
 
@@ -403,18 +493,25 @@ export class PriceTrackingService {
       if (!data) throw new Error(`Pool not found: ${poolId.toBase58()}`);
       return liquidityStateV4Layout.decode(data.data);
     } catch (error) {
-      console.warn(`Failed to get full pool info for ${poolId.toString()}:`, error);
+      console.warn(
+        `Failed to get full pool info for ${poolId.toString()}:`,
+        error
+      );
       return null;
     }
   }
 
-  private async calculatePriceFromPoolData(poolAccountInfo: AccountInfo<Buffer>, tokenMint: string, solMint: string): Promise<number> {
+  private async calculatePriceFromPoolData(
+    poolAccountInfo: AccountInfo<Buffer>,
+    tokenMint: string,
+    solMint: string
+  ): Promise<number> {
     // Decode the full pool data using SDK v2 layout
     const poolData = liquidityStateV4Layout.decode(poolAccountInfo.data);
-    
+
     const baseMint = poolData.baseMint.toString();
     const quoteMint = poolData.quoteMint.toString();
-    
+
     // Determine which is our token and which is SOL
     const isTokenBase = baseMint === tokenMint;
     const tokenVault = isTokenBase ? poolData.baseVault : poolData.quoteVault;
@@ -424,7 +521,7 @@ export class PriceTrackingService {
     const [tokenVaultInfo, solVaultInfo, tokenDecimals] = await Promise.all([
       this.connection.getParsedAccountInfo(tokenVault),
       this.connection.getParsedAccountInfo(solVault),
-      this.getTokenDecimals(tokenMint)
+      this.getTokenDecimals(tokenMint),
     ]);
 
     if (!tokenVaultInfo.value?.data || !solVaultInfo.value?.data) {
@@ -434,15 +531,22 @@ export class PriceTrackingService {
     // Extract token amounts from parsed account data
     const tokenVaultData = tokenVaultInfo.value.data as ParsedAccountData;
     const solVaultData = solVaultInfo.value.data as ParsedAccountData;
-    
-    const tokenReserve = parseFloat(tokenVaultData.parsed.info.tokenAmount.amount);
+
+    const tokenReserve = parseFloat(
+      tokenVaultData.parsed.info.tokenAmount.amount
+    );
     const solReserve = parseFloat(solVaultData.parsed.info.tokenAmount.amount);
 
     // Calculate price: SOL reserve / token reserve (adjusted for decimals)
-    const price = (solReserve / Math.pow(10, 9)) / (tokenReserve / Math.pow(10, tokenDecimals));
-    
-    console.log(`Pool reserves - Token: ${tokenReserve}, SOL: ${solReserve}, Price: ${price}`);
-    
+    const price =
+      solReserve /
+      Math.pow(10, 9) /
+      (tokenReserve / Math.pow(10, tokenDecimals));
+
+    console.log(
+      `Pool reserves - Token: ${tokenReserve}, SOL: ${solReserve}, Price: ${price}`
+    );
+
     return price;
   }
 
@@ -457,17 +561,22 @@ export class PriceTrackingService {
 
       // Get token supply from Solana RPC with optimized call
       const mintPubkey = new PublicKey(tokenMint);
-      const mintInfo = await this.connection.getTokenSupply(mintPubkey, 'confirmed');
-      
+      const mintInfo = await this.connection.getTokenSupply(
+        mintPubkey,
+        'confirmed'
+      );
+
       if (!mintInfo.value) {
         throw new Error('Failed to get token supply');
       }
 
-      const supply = parseFloat(mintInfo.value.amount) / Math.pow(10, mintInfo.value.decimals);
-      
+      const supply =
+        parseFloat(mintInfo.value.amount) /
+        Math.pow(10, mintInfo.value.decimals);
+
       // Cache for 1 hour (supply rarely changes)
       await redis.setex(cacheKey, 3600, supply.toString());
-      
+
       return supply;
     } catch (error) {
       console.warn(`Failed to get token supply for ${tokenMint}:`, error);
@@ -484,15 +593,18 @@ export class PriceTrackingService {
       }
 
       const mintPubkey = new PublicKey(tokenMint);
-      const mintInfo = await this.connection.getTokenSupply(mintPubkey, 'confirmed');
-      
+      const mintInfo = await this.connection.getTokenSupply(
+        mintPubkey,
+        'confirmed'
+      );
+
       if (!mintInfo.value) {
         throw new Error('Failed to get token mint info');
       }
 
       const decimals = mintInfo.value.decimals;
       await redis.set(cacheKey, decimals.toString()); // Permanent cache
-      
+
       return decimals;
     } catch (error) {
       console.warn(`Failed to get token decimals for ${tokenMint}:`, error);
@@ -503,19 +615,22 @@ export class PriceTrackingService {
   private async getSolPriceUsd(): Promise<number> {
     try {
       const now = Date.now();
-      
+
       // Check Redis cache first for distributed caching
       const cacheKey = 'sol_usd_price';
       const cached = await redis.get(cacheKey);
       if (cached) {
         const data = JSON.parse(cached);
-        if ((now - data.timestamp) < this.SOL_PRICE_CACHE_TTL) {
+        if (now - data.timestamp < this.SOL_PRICE_CACHE_TTL) {
           return data.price;
         }
       }
 
       // Check memory cache
-      if (this.solPriceCache && (now - this.solPriceCache.timestamp) < this.SOL_PRICE_CACHE_TTL) {
+      if (
+        this.solPriceCache &&
+        now - this.solPriceCache.timestamp < this.SOL_PRICE_CACHE_TTL
+      ) {
         return this.solPriceCache.price;
       }
 
@@ -523,28 +638,41 @@ export class PriceTrackingService {
       try {
         const dexScreenerSolPrice = await dexScreenerService.getSolPriceUsd();
         if (dexScreenerSolPrice && dexScreenerSolPrice > 0) {
-          console.log(`✅ Got SOL price from DexScreener: $${dexScreenerSolPrice}`);
+          console.log(
+            `✅ Got SOL price from DexScreener: $${dexScreenerSolPrice}`
+          );
           // Update both caches
           this.solPriceCache = { price: dexScreenerSolPrice, timestamp: now };
-          await redis.setex(cacheKey, 30, JSON.stringify({ price: dexScreenerSolPrice, timestamp: now }));
+          await redis.setex(
+            cacheKey,
+            30,
+            JSON.stringify({ price: dexScreenerSolPrice, timestamp: now })
+          );
           return dexScreenerSolPrice;
         }
       } catch (error) {
-        console.warn('DexScreener SOL price failed, falling back to on-chain:', error);
+        console.warn(
+          'DexScreener SOL price failed, falling back to on-chain:',
+          error
+        );
       }
 
       // Fallback to on-chain SOL price from USDC/SOL pool
       const price = await this.getSolPriceFromOnChain();
       console.log(`✅ Got SOL price from on-chain: $${price}`);
-        
+
       // Update both caches
       this.solPriceCache = { price, timestamp: now };
-      await redis.setex(cacheKey, 30, JSON.stringify({ price, timestamp: now }));
-      
+      await redis.setex(
+        cacheKey,
+        30,
+        JSON.stringify({ price, timestamp: now })
+      );
+
       return price;
     } catch (error) {
       console.warn('Failed to get SOL/USD price:', error);
-      return 132; // Current approximate SOL price as fallback
+      return SOL_PRICE_FALLBACK;
     }
   }
 
@@ -553,7 +681,7 @@ export class PriceTrackingService {
       // Get SOL price from USDC/SOL pool on-chain
       const usdcMint = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
       const solMint = 'So11111111111111111111111111111111111111112';
-      
+
       // Find USDC/SOL pool
       const poolAddress = await this.findPoolAddress(usdcMint, solMint);
       if (!poolAddress) {
@@ -561,14 +689,16 @@ export class PriceTrackingService {
       }
 
       // Get pool account data
-      const poolAccountInfo = await this.connection.getAccountInfo(new PublicKey(poolAddress));
+      const poolAccountInfo = await this.connection.getAccountInfo(
+        new PublicKey(poolAddress)
+      );
       if (!poolAccountInfo) {
         throw new Error('Pool account not found');
       }
 
       // Parse pool data using SDK v2 layout
       const poolData = liquidityStateV4Layout.decode(poolAccountInfo.data);
-      
+
       const baseMint = poolData.baseMint.toString();
 
       // Determine which vault is USDC and which is SOL
@@ -579,7 +709,7 @@ export class PriceTrackingService {
       // Get vault balances
       const [usdcVaultInfo, solVaultInfo] = await Promise.all([
         this.connection.getParsedAccountInfo(usdcVault),
-        this.connection.getParsedAccountInfo(solVault)
+        this.connection.getParsedAccountInfo(solVault),
       ]);
 
       if (!usdcVaultInfo.value?.data || !solVaultInfo.value?.data) {
@@ -588,13 +718,18 @@ export class PriceTrackingService {
 
       const usdcVaultData = usdcVaultInfo.value.data as ParsedAccountData;
       const solVaultData = solVaultInfo.value.data as ParsedAccountData;
-      
-      const usdcReserve = parseFloat(usdcVaultData.parsed.info.tokenAmount.amount);
-      const solReserve = parseFloat(solVaultData.parsed.info.tokenAmount.amount);
+
+      const usdcReserve = parseFloat(
+        usdcVaultData.parsed.info.tokenAmount.amount
+      );
+      const solReserve = parseFloat(
+        solVaultData.parsed.info.tokenAmount.amount
+      );
 
       // Calculate SOL price in USD: USDC reserve / SOL reserve (adjusted for decimals)
-      const solPriceUsd = (usdcReserve / Math.pow(10, 6)) / (solReserve / Math.pow(10, 9));
-      
+      const solPriceUsd =
+        usdcReserve / Math.pow(10, 6) / (solReserve / Math.pow(10, 9));
+
       return solPriceUsd;
     } catch (error) {
       console.warn('On-chain SOL price failed:', error);
@@ -605,9 +740,12 @@ export class PriceTrackingService {
   async updateTokenPrice(tokenMint: string): Promise<void> {
     try {
       // Validate token before processing
-      const validation = await tokenValidationService.validateTokenMint(tokenMint);
+      const validation =
+        await tokenValidationService.validateTokenMint(tokenMint);
       if (!validation.isValid) {
-        console.warn(`Skipping invalid token ${tokenMint}: ${validation.reason}`);
+        console.warn(
+          `Skipping invalid token ${tokenMint}: ${validation.reason}`
+        );
         // Clean up invalid token from database
         await tokenValidationService.cleanupInvalidToken(tokenMint);
         // Throw error to signal worker to stop processing this token
@@ -615,7 +753,7 @@ export class PriceTrackingService {
       }
 
       const priceData = await this.getTokenPrice(tokenMint);
-      
+
       // Use transaction for atomicity and better performance
       await prisma.$transaction(async (tx: any) => {
         // Update current price in database
@@ -648,8 +786,9 @@ export class PriceTrackingService {
       });
 
       // Broadcast price update via Redis pub/sub (fire and forget)
-      redisPublisher.publish('price_update', JSON.stringify(priceData)).catch(console.error);
-
+      redisPublisher
+        .publish('price_update', JSON.stringify(priceData))
+        .catch(console.error);
     } catch (error) {
       console.error(`Failed to update price for ${tokenMint}:`, error);
     }
@@ -685,7 +824,7 @@ export class PriceTrackingService {
         select: { tokenMint: true },
         orderBy: { lastUpdated: 'desc' },
       });
-      
+
       return tokens.map((t: any) => t.tokenMint);
     } catch (error) {
       console.error('Failed to get tracked tokens:', error);

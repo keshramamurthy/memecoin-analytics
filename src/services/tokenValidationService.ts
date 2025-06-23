@@ -19,14 +19,11 @@ export class TokenValidationService {
 
   private constructor() {
     const heliusRpcUrl = `https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY}`;
-    this.connection = new Connection(
-      heliusRpcUrl,
-      { 
-        commitment: 'confirmed', 
-        disableRetryOnRateLimit: true,
-        httpHeaders: { 'User-Agent': 'memecoin-analytics/1.0' }
-      }
-    );
+    this.connection = new Connection(heliusRpcUrl, {
+      commitment: 'confirmed',
+      disableRetryOnRateLimit: true,
+      httpHeaders: { 'User-Agent': 'memecoin-analytics/1.0' },
+    });
   }
 
   static getInstance(): TokenValidationService {
@@ -46,7 +43,7 @@ export class TokenValidationService {
           decimals: 9,
           supply: 589000000, // Approximate SOL total supply
           name: 'Solana',
-          symbol: 'SOL'
+          symbol: 'SOL',
         };
       }
 
@@ -61,24 +58,32 @@ export class TokenValidationService {
       const cached = await redis.get(cacheKey);
       if (cached) {
         const result = JSON.parse(cached);
-        console.log(`📋 Cached validation result for ${tokenMint}: ${result.isValid ? 'VALID' : 'INVALID'}`);
+        console.log(
+          `📋 Cached validation result for ${tokenMint}: ${result.isValid ? 'VALID' : 'INVALID'}`
+        );
         return result;
       }
 
       // Perform on-chain validation
       const onChainValidation = await this.validateOnChain(tokenMint);
-      
+
       // Cache the result
-      await redis.setex(cacheKey, this.VALIDATION_CACHE_TTL, JSON.stringify(onChainValidation));
-      
-      console.log(`🔍 Token validation for ${tokenMint}: ${onChainValidation.isValid ? 'VALID' : 'INVALID'} - ${onChainValidation.reason || 'Success'}`);
-      
+      await redis.setex(
+        cacheKey,
+        this.VALIDATION_CACHE_TTL,
+        JSON.stringify(onChainValidation)
+      );
+
+      console.log(
+        `🔍 Token validation for ${tokenMint}: ${onChainValidation.isValid ? 'VALID' : 'INVALID'} - ${onChainValidation.reason || 'Success'}`
+      );
+
       return onChainValidation;
     } catch (error) {
       console.warn(`Token validation error for ${tokenMint}:`, error);
       return {
         isValid: false,
-        reason: `Validation error: ${error instanceof Error ? error.message : 'Unknown error'}`
+        reason: `Validation error: ${error instanceof Error ? error.message : 'Unknown error'}`,
       };
     }
   }
@@ -91,13 +96,19 @@ export class TokenValidationService {
 
     // Solana addresses should be 32-44 characters (base58 encoded)
     if (tokenMint.length < 32 || tokenMint.length > 44) {
-      return { isValid: false, reason: 'Invalid address format: incorrect length' };
+      return {
+        isValid: false,
+        reason: 'Invalid address format: incorrect length',
+      };
     }
 
     // Check for valid base58 characters
     const base58Regex = /^[1-9A-HJ-NP-Za-km-z]+$/;
     if (!base58Regex.test(tokenMint)) {
-      return { isValid: false, reason: 'Invalid address format: invalid base58 characters' };
+      return {
+        isValid: false,
+        reason: 'Invalid address format: invalid base58 characters',
+      };
     }
 
     // Try to create PublicKey (this validates the format)
@@ -105,40 +116,49 @@ export class TokenValidationService {
       new PublicKey(tokenMint);
       return { isValid: true };
     } catch (error) {
-      return { isValid: false, reason: 'Invalid address format: not a valid Solana public key' };
+      return {
+        isValid: false,
+        reason: 'Invalid address format: not a valid Solana public key',
+      };
     }
   }
 
-  private async validateOnChain(tokenMint: string): Promise<TokenValidationResult> {
+  private async validateOnChain(
+    tokenMint: string
+  ): Promise<TokenValidationResult> {
     try {
       const mintPubkey = new PublicKey(tokenMint);
-      
+
       // Get token mint account info
       const mintInfo = await this.connection.getAccountInfo(mintPubkey);
-      
+
       if (!mintInfo) {
         return { isValid: false, reason: 'Token mint account does not exist' };
       }
 
       // Check if it's a token mint account (should be owned by Token Program)
       const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
-      const TOKEN_2022_PROGRAM_ID = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
-      
-      if (mintInfo.owner.toString() !== TOKEN_PROGRAM_ID && 
-          mintInfo.owner.toString() !== TOKEN_2022_PROGRAM_ID) {
+      const TOKEN_2022_PROGRAM_ID =
+        'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
+
+      if (
+        mintInfo.owner.toString() !== TOKEN_PROGRAM_ID &&
+        mintInfo.owner.toString() !== TOKEN_2022_PROGRAM_ID
+      ) {
         return { isValid: false, reason: 'Account is not a token mint' };
       }
 
       // Get token supply and decimals
       try {
         const supplyInfo = await this.connection.getTokenSupply(mintPubkey);
-        
+
         if (!supplyInfo.value) {
           return { isValid: false, reason: 'Unable to get token supply' };
         }
 
         const decimals = supplyInfo.value.decimals;
-        const supply = parseFloat(supplyInfo.value.amount) / Math.pow(10, decimals);
+        const supply =
+          parseFloat(supplyInfo.value.amount) / Math.pow(10, decimals);
 
         // Additional validation checks
         if (decimals < 0 || decimals > 18) {
@@ -152,11 +172,12 @@ export class TokenValidationService {
         // Try to get token metadata (optional, for additional info)
         let name: string | undefined;
         let symbol: string | undefined;
-        
+
         try {
           // This is a basic attempt to get metadata
           // In a production system, you might want to use a metadata program
-          const largestAccounts = await this.connection.getTokenLargestAccounts(mintPubkey);
+          const largestAccounts =
+            await this.connection.getTokenLargestAccounts(mintPubkey);
           if (largestAccounts.value.length > 0) {
             // Token has holders, which is a good sign
           }
@@ -167,22 +188,23 @@ export class TokenValidationService {
         const result: TokenValidationResult = {
           isValid: true,
           decimals,
-          supply
+          supply,
         };
-        
+
         if (name) result.name = name;
         if (symbol) result.symbol = symbol;
-        
+
         return result;
-
       } catch (supplyError) {
-        return { isValid: false, reason: 'Unable to get token supply information' };
+        return {
+          isValid: false,
+          reason: 'Unable to get token supply information',
+        };
       }
-
     } catch (error) {
       return {
         isValid: false,
-        reason: `On-chain validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+        reason: `On-chain validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
       };
     }
   }
@@ -190,17 +212,17 @@ export class TokenValidationService {
   async cleanupInvalidToken(tokenMint: string): Promise<void> {
     try {
       console.log(`🧹 Cleaning up invalid token: ${tokenMint}`);
-      
+
       // Remove from database
       await prisma.$transaction(async (tx) => {
         // Remove price history
         await tx.priceHistory.deleteMany({
-          where: { tokenMint }
+          where: { tokenMint },
         });
-        
+
         // Remove current price record
         await tx.tokenPrice.deleteMany({
-          where: { tokenMint }
+          where: { tokenMint },
         });
       });
 
@@ -211,7 +233,7 @@ export class TokenValidationService {
         `token_decimals:${tokenMint}`,
         `dexscreener_price:${tokenMint}`,
         `pool_address:${tokenMint}:*`,
-        `token_validation:${tokenMint}`
+        `token_validation:${tokenMint}`,
       ];
 
       for (const key of cacheKeys) {
@@ -232,15 +254,17 @@ export class TokenValidationService {
     }
   }
 
-  async validateAndCleanupBatch(tokenMints: string[]): Promise<{valid: string[], invalid: string[]}> {
+  async validateAndCleanupBatch(
+    tokenMints: string[]
+  ): Promise<{ valid: string[]; invalid: string[] }> {
     const results = { valid: [] as string[], invalid: [] as string[] };
-    
+
     console.log(`🔍 Batch validating ${tokenMints.length} tokens...`);
-    
+
     for (const tokenMint of tokenMints) {
       try {
         const validation = await this.validateTokenMint(tokenMint);
-        
+
         if (validation.isValid) {
           results.valid.push(tokenMint);
         } else {
@@ -254,8 +278,10 @@ export class TokenValidationService {
         await this.cleanupInvalidToken(tokenMint);
       }
     }
-    
-    console.log(`✅ Batch validation complete: ${results.valid.length} valid, ${results.invalid.length} invalid`);
+
+    console.log(
+      `✅ Batch validation complete: ${results.valid.length} valid, ${results.invalid.length} invalid`
+    );
     return results;
   }
 }

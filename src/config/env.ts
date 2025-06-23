@@ -7,7 +7,9 @@ const EnvSchema = z.object({
   REDIS_URL: z.string().default('redis://localhost:6379'),
   HELIUS_API_KEY: z.string(),
   POLL_MS: z.coerce.number().default(2000),
-  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  NODE_ENV: z
+    .enum(['development', 'production', 'test'])
+    .default('development'),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

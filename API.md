@@ -1,11 +1,14 @@
-# Memecoin Trading Analytics API Documentation
+# Memecoin Analytics Platform - API Documentation
 
-A high-performance micro-service for real-time Solana memecoin price tracking and analytics.
+A comprehensive real-time analytics platform for Solana memecoins with intelligent pool selection, security analysis, and live WebSocket streaming.
 
 ## Base URL
 ```
 http://localhost:3305
 ```
+
+## Dashboard
+Interactive web dashboard available at: **http://localhost:3305**
 
 ## Authentication
 No authentication required for public endpoints.
@@ -15,88 +18,121 @@ No authentication required for public endpoints.
 ## REST API Endpoints
 
 ### Health Check
-Check if the API is running and healthy.
+Check if the API is running and healthy with database/Redis connectivity.
 
-**GET** `/health`
+**GET** `/api/health`
 
 **Response:**
 ```json
 {
-  "status": "ok",
-  "timestamp": "2024-01-15T10:30:00.000Z"
+  "status": "healthy",
+  "timestamp": "2025-06-23T20:19:25.807Z",
+  "database": "connected",
+  "redis": "connected"
 }
 ```
 
 ---
 
 ### Get All Tracked Tokens
-Retrieve a paginated list of all tracked tokens with their current price data.
+Retrieve a list of all currently tracked tokens with their latest price data.
 
-**GET** `/tokens`
+**GET** `/api/tokens`
 
-**Query Parameters:**
-- `page` (optional, number): Page number (default: 1)
-- `limit` (optional, number): Items per page (default: 20, max: 100)
+**Response:**
+```json
+{
+  "tokens": [
+    {
+      "mint": "9yS8Bocd5geSqyY7hp9MeXmnfBNYw8nuw8rZFQeHEray",
+      "name": "ChillWifSwifties2FartDegenBonk69",
+      "symbol": "Degen69",
+      "priceUsd": 0.00003612949500000001,
+      "marketCap": 36129.47503218205,
+      "lastUpdated": "2025-06-23T20:19:38.955Z"
+    }
+  ]
+}
+```
+
+---
+
+### Get Comprehensive Token Metrics
+Get detailed analytics for a specific token including price data, security analysis, and holder metrics.
+
+**GET** `/api/tokens/:mint/metrics`
+
+**Path Parameters:**
+- `mint` (required, string): Token mint address
 
 **Example:**
 ```
-GET /tokens?page=1&limit=10
+GET /api/tokens/9yS8Bocd5geSqyY7hp9MeXmnfBNYw8nuw8rZFQeHEray/metrics
 ```
 
 **Response:**
 ```json
 {
-  "data": [
-    {
-      "mint": "71Jvq4Epe2FCJ7JFSF7jLXdNk1Wy4Bhqd9iL6bEFELvg",
-      "priceUsd": 0.033051,
-      "priceInSol": 0.00025,
-      "marketCap": 33051000,
-      "totalSupply": 1000000000,
-      "lastUpdated": "2024-01-15T10:30:00.000Z"
+  "tokenMint": "9yS8Bocd5geSqyY7hp9MeXmnfBNYw8nuw8rZFQeHEray",
+  "name": "ChillWifSwifties2FartDegenBonk69",
+  "symbol": "Degen69",
+  "totalSupply": 999999141.47509,
+  "priceUsd": 0.00003612949500000001,
+  "priceInSol": 2.589e-7,
+  "marketCap": 36129.47503218205,
+  "concentrationRatio": 53.36272376908713,
+  "lastUpdated": "2025-06-23T20:19:38.955Z",
+  "rugCheck": {
+    "score_normalised": 16,
+    "risks": [
+      {
+        "name": "Low amount of LP Providers",
+        "description": "Only a few users are providing liquidity",
+        "score": 500,
+        "level": "warn"
+      }
+    ],
+    "rugged": false,
+    "riskLevel": "high",
+    "riskSummary": {
+      "totalRisks": 1,
+      "highRisks": 0,
+      "mediumRisks": 1,
+      "lowRisks": 0
     }
-  ],
-  "pagination": {
-    "page": 1,
-    "limit": 10,
-    "total": 150,
-    "totalPages": 15
   }
 }
 ```
 
 ---
 
-### Get Token Metrics
-Get current price and market metrics for a specific token. If the token is not tracked, it will be automatically discovered and tracked.
+### Get Top Token Holders
+Retrieve the largest holders for a specific token.
 
-**GET** `/tokens/:mint/metrics`
-
-**Path Parameters:**
-- `mint` (required, string): Token mint address
+**GET** `/api/tokens/:mint/holders/top`
 
 **Query Parameters:**
-- `window` (optional, string): Time window for metrics calculation
-  - `1m` - 1 minute
-  - `5m` - 5 minutes  
-  - `1h` - 1 hour (default)
+- `limit` (optional, number): Maximum number of holders to return (default: 10, max: 50)
 
 **Example:**
 ```
-GET /tokens/71Jvq4Epe2FCJ7JFSF7jLXdNk1Wy4Bhqd9iL6bEFELvg/metrics?window=5m
+GET /api/tokens/9yS8Bocd5geSqyY7hp9MeXmnfBNYw8nuw8rZFQeHEray/holders/top?limit=5
 ```
 
-**Response:**
-```json
-{
-  "tokenMint": "71Jvq4Epe2FCJ7JFSF7jLXdNk1Wy4Bhqd9iL6bEFELvg",
-  "priceUsd": 0.033051,
-  "priceInSol": 0.00025,
-  "marketCap": 33051000,
-  "totalSupply": 1000000000,
-  "lastUpdated": 1705312200000,
-  "window": "5m"
-}
+---
+
+### Get Trade History
+Retrieve recent trade history for a specific token.
+
+**GET** `/api/tokens/:mint/trades`
+
+**Query Parameters:**
+- `limit` (optional, number): Maximum number of trades to return (default: 100, max: 1000)
+- `before` (optional, timestamp): Get trades before this timestamp
+
+**Example:**
+```
+GET /api/tokens/9yS8Bocd5geSqyY7hp9MeXmnfBNYw8nuw8rZFQeHEray/trades?limit=50
 ```
 
 ---
@@ -147,13 +183,13 @@ GET /tokens/71Jvq4Epe2FCJ7JFSF7jLXdNk1Wy4Bhqd9iL6bEFELvg/history?window=1h
 ### Prometheus Metrics
 Get Prometheus-compatible metrics for monitoring.
 
-**GET** `/metrics`
+**GET** `/api/metrics`
 
 **Response:**
 ```
-# HELP polling_jobs_total Total number of polling jobs processed
-# TYPE polling_jobs_total counter
-polling_jobs_total{token_mint="71Jvq4Epe2FCJ7JFSF7jLXdNk1Wy4Bhqd9iL6bEFELvg",status="success"} 1500
+# HELP http_requests_total Total number of HTTP requests
+# TYPE http_requests_total counter
+http_requests_total{method="GET",route="/api/health",status_code="200"} 150
 ```
 
 ---
@@ -161,57 +197,83 @@ polling_jobs_total{token_mint="71Jvq4Epe2FCJ7JFSF7jLXdNk1Wy4Bhqd9iL6bEFELvg",sta
 ## WebSocket API
 
 ### Connection
-Connect to the WebSocket namespace for real-time price updates.
+Connect to the WebSocket server for real-time price updates using subscription model.
 
 **Endpoint:** `/ws`
 
 **Connection URL:**
 ```
-ws://localhost:8080/ws?token=<TOKEN_MINT>
+ws://localhost:3305/ws
 ```
 
-**Query Parameters:**
-- `token` (required, string): Token mint address to subscribe to
+### Subscription Model
+
+#### Subscribe to Token Updates
+Subscribe to real-time updates for a specific token.
+
+**Emit:** `subscribe`
+```json
+{
+  "tokenMint": "9yS8Bocd5geSqyY7hp9MeXmnfBNYw8nuw8rZFQeHEray"
+}
+```
+
+#### Unsubscribe from Token Updates
+Stop receiving updates for a specific token.
+
+**Emit:** `unsubscribe`
+```json
+{
+  "tokenMint": "9yS8Bocd5geSqyY7hp9MeXmnfBNYw8nuw8rZFQeHEray"
+}
+```
 
 ### Events
 
-#### Connection Success
-Emitted immediately after successful connection with initial token data.
-
-**Event:** `price_update`
-```json
-{
-  "tokenMint": "71Jvq4Epe2FCJ7JFSF7jLXdNk1Wy4Bhqd9iL6bEFELvg",
-  "priceUsd": 0.033051,
-  "priceInSol": 0.00025,
-  "marketCap": 33051000,
-  "totalSupply": 1000000000,
-  "timestamp": 1705312200000
-}
-```
-
 #### Real-time Price Updates
-Emitted every second when token price changes.
+Emitted every 3 seconds with current price data for subscribed tokens.
 
-**Event:** `price_update`
+**Event:** `priceUpdate`
 ```json
 {
-  "tokenMint": "71Jvq4Epe2FCJ7JFSF7jLXdNk1Wy4Bhqd9iL6bEFELvg",
-  "priceUsd": 0.033070,
-  "priceInSol": 0.000251,
-  "marketCap": 33070000,
-  "totalSupply": 1000000000,
-  "timestamp": 1705312201000
+  "tokenMint": "9yS8Bocd5geSqyY7hp9MeXmnfBNYw8nuw8rZFQeHEray",
+  "name": "ChillWifSwifties2FartDegenBonk69",
+  "symbol": "Degen69",
+  "priceUsd": 0.00003612949500000001,
+  "priceInSol": 2.589e-7,
+  "marketCap": 36129.47503218205,
+  "timestamp": "2025-06-23T20:19:38.955Z"
 }
 ```
 
-#### Connection Errors
-Emitted when there's an error with the connection or token discovery.
+#### Metrics Updates
+Emitted when comprehensive token metrics are updated (includes RugCheck data).
 
-**Event:** `error`
+**Event:** `metricsUpdate`
 ```json
 {
-  "message": "Token parameter is required"
+  "tokenMint": "9yS8Bocd5geSqyY7hp9MeXmnfBNYw8nuw8rZFQeHEray",
+  "concentrationRatio": 53.36272376908713,
+  "rugCheck": {
+    "score_normalised": 16,
+    "riskLevel": "high",
+    "rugged": false
+  },
+  "timestamp": "2025-06-23T20:19:38.955Z"
+}
+```
+
+#### New Trade Notifications
+Emitted when new trades are detected for subscribed tokens.
+
+**Event:** `trade`
+```json
+{
+  "tokenMint": "9yS8Bocd5geSqyY7hp9MeXmnfBNYw8nuw8rZFQeHEray",
+  "type": "buy",
+  "amount": 1000000,
+  "priceUsd": 0.00003612949500000001,
+  "timestamp": "2025-06-23T20:19:38.955Z"
 }
 ```
 
@@ -219,18 +281,35 @@ Emitted when there's an error with the connection or token discovery.
 ```javascript
 import { io } from 'socket.io-client';
 
-const socket = io('ws://localhost:8080/ws', {
-  query: {
-    token: '71Jvq4Epe2FCJ7JFSF7jLXdNk1Wy4Bhqd9iL6bEFELvg'
-  }
+const socket = io('ws://localhost:3305/ws');
+
+// Subscribe to token updates
+socket.emit('subscribe', {
+  tokenMint: '9yS8Bocd5geSqyY7hp9MeXmnfBNYw8nuw8rZFQeHEray'
 });
 
-socket.on('price_update', (data) => {
+// Listen for price updates
+socket.on('priceUpdate', (data) => {
   console.log('Price update:', data);
 });
 
-socket.on('error', (error) => {
-  console.error('WebSocket error:', error);
+// Listen for metrics updates
+socket.on('metricsUpdate', (data) => {
+  console.log('Metrics update:', data);
+});
+
+// Listen for trade notifications
+socket.on('trade', (data) => {
+  console.log('New trade:', data);
+});
+
+// Handle connection status
+socket.on('connect', () => {
+  console.log('Connected to WebSocket server');
+});
+
+socket.on('disconnect', () => {
+  console.log('Disconnected from WebSocket server');
 });
 ```
 
@@ -254,28 +333,29 @@ All endpoints return standard HTTP status codes:
 
 ---
 
-## Performance Features
+## Key Features
 
-### Auto-Discovery
-Tokens are automatically discovered and tracked when first requested via any endpoint.
+### Intelligent Pool Selection
+- **DexScreener Integration**: Automatically selects optimal DEX pools (Raydium, Orca) over launchpads
+- **Liquidity Prioritization**: Chooses pools with highest liquidity for accurate pricing
+- **Multi-DEX Support**: Covers all major Solana DEXes with smart scoring algorithm
 
-### Aggressive Caching
-- Token prices: 1-second cache for ultra-fast responses
-- Token supply: 1-hour cache (rarely changes)
-- Pool information: 5-minute cache
-- SOL price: 30-second cache
+### Security Analysis
+- **RugCheck Integration**: Real-time token security analysis and risk scoring
+- **Risk Assessment**: Comprehensive fraud detection and risk categorization
+- **Safety Metrics**: Tracks LP provider count, token holder distribution, and other security indicators
 
-### Optimizations
-- **Singleton Pattern**: Single service instance prevents duplicate price calls
-- **Parallel Execution**: Multiple data sources fetched concurrently  
-- **Pool-based Pricing**: Direct Raydium pool queries for speed
-- **Helius RPC**: Premium Solana RPC endpoint for reliability
-- **Redis Pub/Sub**: Efficient WebSocket broadcasting
+### Performance Optimizations
+- **3-Second Cache TTL**: Responsive price updates every 3 seconds
+- **Redis Caching**: Intelligent caching strategy for different data types
+- **Parallel Processing**: Concurrent API calls for optimal performance
+- **WebSocket Rooms**: Efficient subscription management for real-time updates
 
-### Rate Limits
-- Price updates: Every 1 second per token
-- WebSocket connections: Unlimited (uses rooms for efficiency)
-- REST API: No explicit limits (relies on caching)
+### Production Features
+- **Docker Containerization**: Multi-stage builds with Alpine Linux
+- **Health Monitoring**: Database and Redis connectivity checks
+- **Prometheus Metrics**: Comprehensive monitoring and observability
+- **Error Handling**: Robust error recovery and logging
 
 ---
 
@@ -284,33 +364,52 @@ Tokens are automatically discovered and tracked when first requested via any end
 Use the included k6 script to test API performance:
 
 ```bash
-k6 run k6/load-test.js
+k6 run k6/comprehensive-load-test.js
 ```
 
-**Test Scenario:**
-- 500 concurrent virtual users
-- 30-second peak load
-- Mixed endpoint testing
-- 95th percentile response time < 1000ms
-- Error rate < 5%
+**Test Scenarios:**
+- Multi-endpoint stress testing
+- WebSocket connection load testing
+- Database performance validation
+- Error rate monitoring
 
 ---
 
-## Token Examples
+## Example Usage
 
-**Popular Test Tokens:**
-- `71Jvq4Epe2FCJ7JFSF7jLXdNk1Wy4Bhqd9iL6bEFELvg` - Test memecoin
-- `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` - USDC
-- `So11111111111111111111111111111111111111112` - Wrapped SOL
+### Test Token
+```
+9yS8Bocd5geSqyY7hp9MeXmnfBNYw8nuw8rZFQeHEray
+```
+
+### Quick Test Commands
+```bash
+# Health check
+curl http://localhost:3305/api/health
+
+# Get token metrics with RugCheck analysis
+curl http://localhost:3305/api/tokens/9yS8Bocd5geSqyY7hp9MeXmnfBNYw8nuw8rZFQeHEray/metrics
+
+# View dashboard
+open http://localhost:3305
+```
 
 ---
 
 ## Architecture
 
-- **Express.js** - HTTP server
-- **Socket.IO** - WebSocket real-time communication  
-- **BullMQ** - Job queue for 1-second price polling
-- **Prisma** - ORM with SQLite database
-- **Redis** - Caching and pub/sub messaging
-- **Helius** - Solana RPC provider
-- **Raydium SDK** - Direct pool price calculation
+### Technology Stack
+- **Express.js** - HTTP API server with TypeScript
+- **Socket.IO** - Real-time WebSocket communication with subscription management
+- **Prisma ORM** - Database layer with SQLite for development
+- **Redis** - Caching and pub/sub messaging (3-second TTL for responsive updates)
+- **DexScreener API** - Intelligent pool selection and price data
+- **RugCheck API** - Token security analysis and risk assessment
+- **Docker** - Multi-stage containerization with production optimization
+
+### Core Services
+- **DexScreener Service**: Optimal pool selection prioritizing established DEXes
+- **RugCheck Service**: Token security analysis and fraud detection
+- **Price Tracking Service**: Real-time price monitoring with 3-second intervals
+- **Metrics Service**: Advanced analytics including concentration ratios and holder analysis
+- **Socket Service**: WebSocket subscription management and broadcasting

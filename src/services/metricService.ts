@@ -2,6 +2,7 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import { prisma } from '../config/database.js';
 import { redis } from '../config/redis.js';
 import { env } from '../config/env.js';
+import { SOL_TOTAL_SUPPLY } from '../config/constants.js';
 import { tokenValidationService } from './tokenValidationService.js';
 import { rugCheckService, RugCheckData } from './rugCheckService.js';
 
@@ -20,7 +21,7 @@ export interface TokenMetricsResult {
   priceUsd: number;
   priceInSol: number;
   marketCap: number;
-  concentrationRatio: number;  // Top 10 holders % of supply
+  concentrationRatio: number; // Top 10 holders % of supply
   lastUpdated: string;
   rugCheck?: {
     score_normalised: number;
@@ -54,9 +55,9 @@ export class MetricService {
 
   private constructor() {
     const heliusRpcUrl = `https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY}`;
-    this.connection = new Connection(heliusRpcUrl, { 
+    this.connection = new Connection(heliusRpcUrl, {
       commitment: 'confirmed',
-      disableRetryOnRateLimit: true 
+      disableRetryOnRateLimit: true,
     });
   }
 
@@ -69,7 +70,8 @@ export class MetricService {
 
   async getTokenInfo(tokenMint: string): Promise<TokenInfo> {
     // Validate token first
-    const validation = await tokenValidationService.validateTokenMint(tokenMint);
+    const validation =
+      await tokenValidationService.validateTokenMint(tokenMint);
     if (!validation.isValid) {
       throw new Error(`Invalid token mint: ${validation.reason}`);
     }
@@ -88,20 +90,23 @@ export class MetricService {
           name: 'Solana',
           symbol: 'SOL',
           decimals: 9,
-          totalSupply: 589000000, // Approximate circulating SOL
+          totalSupply: SOL_TOTAL_SUPPLY,
         };
         await redis.setex(cacheKey, 3600, JSON.stringify(solInfo)); // Cache for 1 hour
         return solInfo;
       }
 
       // Get token metadata from Helius API
-      const metadataResponse = await fetch(`https://api.helius.xyz/v0/token-metadata?api-key=${env.HELIUS_API_KEY}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mintAccounts: [tokenMint]
-        })
-      });
+      const metadataResponse = await fetch(
+        `https://api.helius.xyz/v0/token-metadata?api-key=${env.HELIUS_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mintAccounts: [tokenMint],
+          }),
+        }
+      );
 
       if (!metadataResponse.ok) {
         throw new Error('Failed to fetch token metadata');
@@ -112,17 +117,25 @@ export class MetricService {
 
       // Get token supply info
       const mintPubkey = new PublicKey(tokenMint);
-      const mintInfo = await this.connection.getTokenSupply(mintPubkey, 'confirmed');
+      const mintInfo = await this.connection.getTokenSupply(
+        mintPubkey,
+        'confirmed'
+      );
 
       if (!mintInfo.value) {
         throw new Error('Failed to get token supply');
       }
 
       const tokenInfo: TokenInfo = {
-        name: tokenMetadata?.onChainMetadata?.metadata?.data?.name || 'Unknown Token',
-        symbol: tokenMetadata?.onChainMetadata?.metadata?.data?.symbol || 'UNKNOWN',
+        name:
+          tokenMetadata?.onChainMetadata?.metadata?.data?.name ||
+          'Unknown Token',
+        symbol:
+          tokenMetadata?.onChainMetadata?.metadata?.data?.symbol || 'UNKNOWN',
         decimals: mintInfo.value.decimals,
-        totalSupply: parseFloat(mintInfo.value.amount) / Math.pow(10, mintInfo.value.decimals),
+        totalSupply:
+          parseFloat(mintInfo.value.amount) /
+          Math.pow(10, mintInfo.value.decimals),
       };
 
       // Cache for 1 hour (token info rarely changes)
@@ -142,9 +155,13 @@ export class MetricService {
     }
   }
 
-  async getTopHolders(tokenMint: string, limit: number = 10): Promise<HolderBalance[]> {
+  async getTopHolders(
+    tokenMint: string,
+    limit: number = 10
+  ): Promise<HolderBalance[]> {
     // Validate token first
-    const validation = await tokenValidationService.validateTokenMint(tokenMint);
+    const validation =
+      await tokenValidationService.validateTokenMint(tokenMint);
     if (!validation.isValid) {
       throw new Error(`Invalid token mint: ${validation.reason}`);
     }
@@ -159,7 +176,7 @@ export class MetricService {
     try {
       // Use Helius RPC method getTokenLargestAccounts
       const rpcUrl = `https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY}`;
-      
+
       const holdersResponse = await fetch(rpcUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -167,8 +184,8 @@ export class MetricService {
           jsonrpc: '2.0',
           id: '1',
           method: 'getTokenLargestAccounts',
-          params: [tokenMint]
-        })
+          params: [tokenMint],
+        }),
       });
 
       if (!holdersResponse.ok) {
@@ -176,24 +193,28 @@ export class MetricService {
       }
 
       const holdersData = await holdersResponse.json();
-      
+
       if (holdersData.error) {
         throw new Error(`RPC error: ${holdersData.error.message}`);
       }
 
       const tokenInfo = await this.getTokenInfo(tokenMint);
-      
+
       // Parse the largest accounts data
-      const holders: HolderBalance[] = holdersData.result?.value?.slice(0, limit).map((account: any) => {
-        const balance = account.uiAmount || 0;
-        const percentage = tokenInfo.totalSupply > 0 ? (balance / tokenInfo.totalSupply) * 100 : 0;
-        
-        return {
-          address: account.address,
-          balance,
-          percentage,
-        };
-      }) || [];
+      const holders: HolderBalance[] =
+        holdersData.result?.value?.slice(0, limit).map((account: any) => {
+          const balance = account.uiAmount || 0;
+          const percentage =
+            tokenInfo.totalSupply > 0
+              ? (balance / tokenInfo.totalSupply) * 100
+              : 0;
+
+          return {
+            address: account.address,
+            balance,
+            percentage,
+          };
+        }) || [];
 
       // Cache for 5 minutes (holder data changes frequently)
       await redis.setex(cacheKey, 300, JSON.stringify(holders));
@@ -209,32 +230,42 @@ export class MetricService {
     try {
       // Get top 10 holders
       const topHolders = await this.getTopHolders(tokenMint, 10);
-      
+
       // Calculate total percentage held by top 10
-      const concentrationRatio = topHolders.reduce((sum, holder) => sum + holder.percentage, 0);
-      
+      const concentrationRatio = topHolders.reduce(
+        (sum, holder) => sum + holder.percentage,
+        0
+      );
+
       return Math.min(concentrationRatio, 100); // Cap at 100%
     } catch (error) {
-      console.warn(`Failed to calculate concentration ratio for ${tokenMint}:`, error);
+      console.warn(
+        `Failed to calculate concentration ratio for ${tokenMint}:`,
+        error
+      );
       return 0;
     }
   }
 
-
-  async getTokenMetrics(tokenMint: string, _window: '1m' | '5m' | '1h' = '1h'): Promise<TokenMetricsResult> {
+  async getTokenMetrics(
+    tokenMint: string,
+    _window: '1m' | '5m' | '1h' = '1h'
+  ): Promise<TokenMetricsResult> {
     // Validate token first
-    const validation = await tokenValidationService.validateTokenMint(tokenMint);
+    const validation =
+      await tokenValidationService.validateTokenMint(tokenMint);
     if (!validation.isValid) {
       throw new Error(`Invalid token mint: ${validation.reason}`);
     }
 
     // Get all data in parallel for better performance
-    const [tokenInfo, currentPrice, concentrationRatio, rugCheckData] = await Promise.all([
-      this.getTokenInfo(tokenMint),
-      this.getCurrentPrice(tokenMint),
-      this.calculateConcentrationRatio(tokenMint),
-      rugCheckService.getTokenRugCheck(tokenMint),
-    ]);
+    const [tokenInfo, currentPrice, concentrationRatio, rugCheckData] =
+      await Promise.all([
+        this.getTokenInfo(tokenMint),
+        this.getCurrentPrice(tokenMint),
+        this.calculateConcentrationRatio(tokenMint),
+        rugCheckService.getTokenRugCheck(tokenMint),
+      ]);
 
     const result: TokenMetricsResult = {
       tokenMint,
@@ -254,7 +285,10 @@ export class MetricService {
         score_normalised: rugCheckData.score_normalised,
         risks: rugCheckData.risks,
         rugged: rugCheckData.rugged,
-        riskLevel: rugCheckService.getOverallRiskLevel(rugCheckData.score_normalised, rugCheckData.rugged),
+        riskLevel: rugCheckService.getOverallRiskLevel(
+          rugCheckData.score_normalised,
+          rugCheckData.rugged
+        ),
         riskSummary: rugCheckService.getRiskSummary(rugCheckData.risks),
       };
     }

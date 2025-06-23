@@ -1,7 +1,10 @@
 import { Request, Response } from 'express';
 import { register } from '../config/metrics.js';
 
-export async function getPrometheusMetrics(req: Request, res: Response): Promise<void> {
+export async function getPrometheusMetrics(
+  req: Request,
+  res: Response
+): Promise<void> {
   try {
     res.set('Content-Type', register.contentType);
     const metrics = await register.metrics();
