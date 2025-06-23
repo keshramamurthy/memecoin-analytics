@@ -563,9 +563,76 @@
             try {
                 const response = await fetch(`${BASE_URL}/tokens/${mint}/metrics?window=${window}`);
                 const data = await response.json();
-                document.getElementById('metrics-response').textContent = JSON.stringify(data, null, 2);
+                
+                // Format the response with enhanced RugCheck display
+                let formattedResponse = formatTokenMetrics(data);
+                document.getElementById('metrics-response').innerHTML = formattedResponse;
             } catch (error) {
                 document.getElementById('metrics-response').textContent = `Error: ${error.message}`;
+            }
+        }
+
+        function formatTokenMetrics(data) {
+            let html = `<div style="font-family: monospace;">`;
+            
+            // Basic token info
+            html += `<div style="margin-bottom: 15px; padding: 10px; background: rgba(167, 139, 250, 0.1); border-radius: 4px;">`;
+            html += `<strong style="color: #a78bfa;">📊 TOKEN METRICS</strong><br>`;
+            html += `Name: ${data.name}<br>`;
+            html += `Symbol: ${data.symbol}<br>`;
+            html += `Price: $${data.priceUsd?.toFixed(8)} (${data.priceInSol?.toFixed(10)} SOL)<br>`;
+            html += `Market Cap: $${data.marketCap?.toLocaleString()}<br>`;
+            html += `Total Supply: ${data.totalSupply?.toLocaleString()}<br>`;
+            html += `Concentration Ratio: ${(data.concentrationRatio * 100)?.toFixed(2)}%<br>`;
+            html += `</div>`;
+
+            // RugCheck data if available
+            if (data.rugCheck) {
+                const rugCheck = data.rugCheck;
+                const riskColor = getRiskColor(rugCheck.riskLevel);
+                
+                html += `<div style="margin-bottom: 15px; padding: 10px; background: rgba(${riskColor}, 0.1); border-radius: 4px; border-left: 4px solid rgb(${riskColor});">`;
+                html += `<strong style="color: rgb(${riskColor});">🛡️ SECURITY ANALYSIS</strong><br>`;
+                html += `Risk Score: ${rugCheck.score_normalised}/100<br>`;
+                html += `Risk Level: <span style="color: rgb(${riskColor}); font-weight: bold;">${rugCheck.riskLevel.toUpperCase()}</span><br>`;
+                html += `Rugged: <span style="color: ${rugCheck.rugged ? '#ff4444' : '#00ff88'};">${rugCheck.rugged ? 'YES ⚠️' : 'NO ✅'}</span><br>`;
+                html += `Total Risks: ${rugCheck.riskSummary.totalRisks} (High: ${rugCheck.riskSummary.highRisks}, Medium: ${rugCheck.riskSummary.mediumRisks}, Low: ${rugCheck.riskSummary.lowRisks})<br>`;
+                
+                if (rugCheck.risks.length > 0) {
+                    html += `<br><strong>Risk Details:</strong><br>`;
+                    rugCheck.risks.forEach((risk, index) => {
+                        const levelColor = risk.level === 'danger' ? '#ff4444' : risk.level === 'warn' ? '#ffaa00' : '#888';
+                        html += `<div style="margin: 5px 0; padding: 5px; background: rgba(0,0,0,0.2); border-radius: 2px;">`;
+                        html += `<span style="color: ${levelColor};">▶ ${risk.name}</span><br>`;
+                        html += `<span style="color: #ccc; font-size: 0.9em;">${risk.description}</span>`;
+                        html += `</div>`;
+                    });
+                }
+                html += `</div>`;
+            } else {
+                html += `<div style="margin-bottom: 15px; padding: 10px; background: rgba(136, 136, 136, 0.1); border-radius: 4px;">`;
+                html += `<strong style="color: #888;">🛡️ SECURITY ANALYSIS</strong><br>`;
+                html += `<span style="color: #888;">RugCheck data not available for this token</span><br>`;
+                html += `</div>`;
+            }
+
+            // Raw JSON for reference
+            html += `<details style="margin-top: 15px;">`;
+            html += `<summary style="color: #a78bfa; cursor: pointer;">📋 Raw JSON Data</summary>`;
+            html += `<pre style="margin-top: 10px; padding: 10px; background: rgba(0,0,0,0.3); border-radius: 4px; font-size: 11px; overflow-x: auto;">${JSON.stringify(data, null, 2)}</pre>`;
+            html += `</details>`;
+
+            html += `</div>`;
+            return html;
+        }
+
+        function getRiskColor(riskLevel) {
+            switch (riskLevel) {
+                case 'low': return '0, 255, 136';      // Green
+                case 'medium': return '255, 170, 0';   // Orange
+                case 'high': return '255, 68, 68';     // Red
+                case 'critical': return '139, 0, 0';   // Dark red
+                default: return '136, 136, 136';       // Gray
             }
         }
 

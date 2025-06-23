@@ -3,6 +3,7 @@ import { prisma } from '../config/database.js';
 import { redis } from '../config/redis.js';
 import { env } from '../config/env.js';
 import { tokenValidationService } from './tokenValidationService.js';
+import { rugCheckService, RugCheckData } from './rugCheckService.js';
 
 export interface TokenInfo {
   name: string;
@@ -21,6 +22,24 @@ export interface TokenMetricsResult {
   marketCap: number;
   concentrationRatio: number;  // Top 10 holders % of supply
   lastUpdated: string;
+  rugCheck?: {
+    score_normalised: number;
+    risks: Array<{
+      name: string;
+      value: string;
+      description: string;
+      score: number;
+      level: 'info' | 'warn' | 'danger';
+    }>;
+    rugged: boolean;
+    riskLevel: 'low' | 'medium' | 'high' | 'critical';
+    riskSummary: {
+      totalRisks: number;
+      highRisks: number;
+      mediumRisks: number;
+      lowRisks: number;
+    };
+  };
 }
 
 export interface HolderBalance {
@@ -210,13 +229,14 @@ export class MetricService {
     }
 
     // Get all data in parallel for better performance
-    const [tokenInfo, currentPrice, concentrationRatio] = await Promise.all([
+    const [tokenInfo, currentPrice, concentrationRatio, rugCheckData] = await Promise.all([
       this.getTokenInfo(tokenMint),
       this.getCurrentPrice(tokenMint),
       this.calculateConcentrationRatio(tokenMint),
+      rugCheckService.getTokenRugCheck(tokenMint),
     ]);
 
-    return {
+    const result: TokenMetricsResult = {
       tokenMint,
       name: tokenInfo.name,
       symbol: tokenInfo.symbol,
@@ -227,6 +247,19 @@ export class MetricService {
       concentrationRatio,
       lastUpdated: new Date().toISOString(),
     };
+
+    // Add RugCheck data if available
+    if (rugCheckData) {
+      result.rugCheck = {
+        score_normalised: rugCheckData.score_normalised,
+        risks: rugCheckData.risks,
+        rugged: rugCheckData.rugged,
+        riskLevel: rugCheckService.getOverallRiskLevel(rugCheckData.score_normalised, rugCheckData.rugged),
+        riskSummary: rugCheckService.getRiskSummary(rugCheckData.risks),
+      };
+    }
+
+    return result;
   }
 
   private async getCurrentPrice(tokenMint: string) {
