@@ -3,6 +3,7 @@ import { Server as HttpServer } from 'http';
 import { redisSubscriber } from '../config/redis.js';
 import { priceTrackingService, TokenPriceData } from './priceTrackingService.js';
 import { addTokenForTracking } from '../ingest/pollerWorker.js';
+import { tokenValidationService } from './tokenValidationService.js';
 
 export class SocketService {
   private io: SocketIOServer;
@@ -34,12 +35,24 @@ export class SocketService {
 
       console.log(`WebSocket connection for token: ${token}`);
 
+      // Validate token mint first
+      const validation = await tokenValidationService.validateTokenMint(token);
+      if (!validation.isValid) {
+        console.log(`WebSocket connection rejected: invalid token ${token} - ${validation.reason}`);
+        socket.emit('error', { 
+          message: `Invalid token mint: ${validation.reason}`,
+          code: 'INVALID_TOKEN_MINT'
+        });
+        socket.disconnect();
+        return;
+      }
+
       const room = `token:${token}`;
       socket.join(room);
 
       // Auto-discover and track the token for price updates
       try {
-        console.log(`Auto-discovering token: ${token}`);
+        console.log(`Auto-discovering validated token: ${token}`);
         
         // Check if token is already tracked
         let tokenData = await priceTrackingService.getCurrentPrice(token);

@@ -11,6 +11,7 @@ import {
   publicKey,
 } from '@raydium-io/raydium-sdk-v2';
 import { dexScreenerService } from './dexScreenerService.js';
+import { tokenValidationService } from './tokenValidationService.js';
 
 export interface TokenPriceData {
   tokenMint: string;
@@ -49,6 +50,12 @@ export class PriceTrackingService {
   }
 
   async getTokenPrice(tokenMint: string): Promise<TokenPriceData> {
+    // Validate token mint first
+    const validation = await tokenValidationService.validateTokenMint(tokenMint);
+    if (!validation.isValid) {
+      throw new Error(`Invalid token mint: ${validation.reason}`);
+    }
+
     // Parallel execution for maximum speed
     const [totalSupply, priceInSol, solPriceUsd] = await Promise.all([
       this.getTokenSupply(tokenMint),
@@ -76,9 +83,18 @@ export class PriceTrackingService {
     if (tokenMints.length === 0) return [];
 
     try {
-      // Get batch prices from DexScreener (more efficient)
+      // Validate all tokens first and filter out invalid ones
+      const validationResults = await tokenValidationService.validateAndCleanupBatch(tokenMints);
+      const validTokenMints = validationResults.valid;
+      
+      if (validTokenMints.length === 0) {
+        console.log('No valid tokens to process in batch');
+        return [];
+      }
+
+      // Get batch prices from DexScreener (more efficient) - only for valid tokens
       const [dexScreenerResults, solPriceUsd] = await Promise.all([
-        dexScreenerService.getBatchTokenPrices(tokenMints),
+        dexScreenerService.getBatchTokenPrices(validTokenMints),
         this.getSolPriceUsd()
       ]);
 
@@ -87,15 +103,15 @@ export class PriceTrackingService {
         dexScreenerResults.map(result => [result.tokenMint, result])
       );
 
-      // Get token supplies for all tokens that need them
+      // Get token supplies for all valid tokens that need them
       const tokenSupplies = await Promise.all(
-        tokenMints.map(tokenMint => this.getTokenSupply(tokenMint))
+        validTokenMints.map(tokenMint => this.getTokenSupply(tokenMint))
       );
 
       const results: TokenPriceData[] = [];
 
-      for (let i = 0; i < tokenMints.length; i++) {
-        const tokenMint = tokenMints[i];
+      for (let i = 0; i < validTokenMints.length; i++) {
+        const tokenMint = validTokenMints[i];
         if (!tokenMint) continue;
         
         const totalSupply = tokenSupplies[i];
@@ -129,9 +145,11 @@ export class PriceTrackingService {
     } catch (error) {
       console.warn('Batch pricing failed, falling back to individual requests:', error);
       
-      // Fallback to individual requests
+      // Fallback to individual requests for valid tokens only
       const results: TokenPriceData[] = [];
-      for (const tokenMint of tokenMints) {
+      const validationResults = await tokenValidationService.validateAndCleanupBatch(tokenMints);
+      
+      for (const tokenMint of validationResults.valid) {
         try {
           const tokenPrice = await this.getTokenPrice(tokenMint);
           results.push(tokenPrice);
@@ -157,7 +175,7 @@ export class PriceTrackingService {
       const cached = await redis.get(cacheKey);
       if (cached) {
         const data = JSON.parse(cached);
-        if ((Date.now() - data.timestamp) < 1000) { // 1 second cache for ultra-fast responses
+        if ((Date.now() - data.timestamp) < 5000) { // 5 second cache for better performance under load
           return data.price;
         }
       }
@@ -167,8 +185,8 @@ export class PriceTrackingService {
         const dexScreenerResult = await dexScreenerService.getTokenPrice(tokenMint);
         if (dexScreenerResult && dexScreenerResult.priceInSol > 0) {
           console.log(`✅ Got price from DexScreener for ${tokenMint}: ${dexScreenerResult.priceInSol} SOL ($${dexScreenerResult.priceUsd})`);
-          // Cache the result
-          await redis.setex(cacheKey, 1, JSON.stringify({ price: dexScreenerResult.priceInSol, timestamp: Date.now() }));
+          // Cache the result for longer under load
+          await redis.setex(cacheKey, 5, JSON.stringify({ price: dexScreenerResult.priceInSol, timestamp: Date.now() }));
           return dexScreenerResult.priceInSol;
         }
       } catch (error) {
@@ -180,8 +198,8 @@ export class PriceTrackingService {
         const poolPrice = await this.getTokenPriceFromPool(tokenMint, solMint);
         if (poolPrice > 0) {
           console.log(`✅ Got price from RPC for ${tokenMint}: ${poolPrice} SOL`);
-          // Cache the result
-          await redis.setex(cacheKey, 1, JSON.stringify({ price: poolPrice, timestamp: Date.now() }));
+          // Cache the result for longer under load
+          await redis.setex(cacheKey, 5, JSON.stringify({ price: poolPrice, timestamp: Date.now() }));
           return poolPrice;
         }
       } catch (error) {
@@ -507,6 +525,16 @@ export class PriceTrackingService {
 
   async updateTokenPrice(tokenMint: string): Promise<void> {
     try {
+      // Validate token before processing
+      const validation = await tokenValidationService.validateTokenMint(tokenMint);
+      if (!validation.isValid) {
+        console.warn(`Skipping invalid token ${tokenMint}: ${validation.reason}`);
+        // Clean up invalid token from database
+        await tokenValidationService.cleanupInvalidToken(tokenMint);
+        // Throw error to signal worker to stop processing this token
+        throw new Error(`Invalid token mint: ${validation.reason}`);
+      }
+
       const priceData = await this.getTokenPrice(tokenMint);
       
       // Use transaction for atomicity and better performance

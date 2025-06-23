@@ -6,7 +6,7 @@ export const options = {
   duration: '30s',
 };
 
-const BASE_URL = 'http://localhost:8080';
+const BASE_URL = 'http://localhost:3305';
 const TEST_MINT = 'So11111111111111111111111111111111111111112';
 
 export default function () {
