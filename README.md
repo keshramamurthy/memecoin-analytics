@@ -1,36 +1,45 @@
-# Memecoin Trading Analytics Micro-service
+# Memecoin Trading Analytics Platform
 
-A real-time trading analytics service for Solana memecoins, powered by Helius API and built with TypeScript, Express, Socket.IO, and Redis.
+A comprehensive real-time analytics platform for Solana memecoins with intelligent pool selection, security analysis, and live WebSocket streaming. Built with TypeScript, Express, Socket.IO, and optimized for production Docker deployment.
 
-## Features
+## 🚀 Features
 
-- Real-time trade ingestion via Helius REST API polling
-- WebSocket broadcasts for live updates
-- Advanced metrics calculation (market cap, token velocity, concentration ratio, paperhand ratio)
-- REST API endpoints for historical data
-- Prometheus metrics for monitoring
-- Docker containerization with Redis caching
+### Core Analytics
+- **Intelligent Pool Selection**: Automatically selects optimal DEX pools (Raydium, Orca) over launchpads for accurate pricing
+- **Real-time Price Streaming**: WebSocket updates every 3 seconds with DexScreener API integration
+- **Advanced Metrics**: Market cap, token velocity, concentration ratio, holder analysis
+- **Security Analysis**: Integrated RugCheck API for token risk assessment and fraud detection
 
-## Quick Start
+### Platform Features
+- **Interactive Web Dashboard**: Dark mode UI with real-time charts and metrics
+- **REST API**: Comprehensive endpoints for historical data and analytics
+- **WebSocket Streaming**: Live price updates and metric broadcasts
+- **Production Ready**: Full Docker containerization with health checks
+- **Monitoring**: Prometheus metrics and structured logging
+
+## 🎯 One-Click Setup
 
 ### Prerequisites
-
-- Node.js 20+
 - Docker & Docker Compose
 - Helius API key
 
-### Installation
+### Quick Start
+```bash
+# Clone and setup
+git clone <repository>
+cd permissionless-hack
 
-1. Clone the repository
-2. Copy environment variables:
-   ```bash
-   cp .env.example .env
-   ```
-3. Update `.env` with your Helius API key
-4. Start with Docker Compose:
-   ```bash
-   docker-compose up -d
-   ```
+# Configure environment
+echo "HELIUS_API_KEY=your_api_key_here" >> .env
+
+# One-click deployment
+./setup.sh
+```
+
+Access your platform:
+- **Dashboard**: http://localhost:3305
+- **Health Check**: http://localhost:3305/api/health
+- **WebSocket**: ws://localhost:3305/ws
 
 ### Development
 
@@ -55,20 +64,28 @@ Start polling worker:
 npm run worker
 ```
 
-### API Endpoints
+## 📡 API Reference
 
-- `GET /health` - Health check
-- `GET /tokens` - List tracked tokens
-- `GET /tokens/:mint/metrics?window=1m|5m|1h` - Token metrics
-- `GET /tokens/:mint/holders/top?limit=10` - Top holders
-- `GET /tokens/:mint/trades?limit=100&before=<timestamp>` - Trade history
-- `GET /metrics` - Prometheus metrics
+### REST Endpoints
+- `GET /api/health` - Health check with database/Redis status
+- `GET /api/tokens` - List all tracked tokens
+- `GET /api/tokens/:mint/metrics` - Comprehensive token analytics with RugCheck data
+- `GET /api/tokens/:mint/holders/top?limit=10` - Top token holders
+- `GET /api/tokens/:mint/trades?limit=100&before=<timestamp>` - Trade history
+- `GET /api/metrics` - Prometheus metrics
 
-### WebSocket
+### WebSocket Streaming
+Connect to `/ws` namespace:
+```javascript
+const socket = io('ws://localhost:3305/ws');
+socket.emit('subscribe', { tokenMint: 'your_token_mint' });
+socket.on('priceUpdate', (data) => console.log(data));
+```
 
-Connect to `/ws` namespace with query parameter `token=<mint>` to receive real-time updates:
-- `trade` events for new trades
-- `metrics` events for metric updates
+Events:
+- `priceUpdate` - Real-time price and market cap updates (every 3s)
+- `metricsUpdate` - Updated analytics including RugCheck scores
+- `trade` - New trade notifications
 
 ### Testing
 
@@ -95,21 +112,55 @@ Build Docker image:
 docker build -t memecoin-analytics .
 ```
 
-## Architecture
+## 🏗️ Architecture
 
-- **Express API**: REST endpoints and middleware
-- **Socket.IO**: Real-time WebSocket communication
-- **BullMQ**: Job queue for polling coordination
-- **Prisma**: Database ORM with SQLite
-- **Redis**: Caching and pub/sub messaging
-- **Prometheus**: Metrics collection and monitoring
+### Technology Stack
+- **Frontend**: Vanilla JS dashboard with Socket.IO client, dark mode UI
+- **Backend**: Express.js API with TypeScript, comprehensive error handling  
+- **Real-time**: Socket.IO WebSocket streaming with subscription management
+- **Database**: Prisma ORM with SQLite, optimized queries
+- **Caching**: Redis with 3-second TTL for responsive price updates
+- **Containerization**: Multi-stage Docker builds, Alpine Linux production images
+- **Monitoring**: Prometheus metrics, structured logging, health checks
 
-## Environment Variables
+### Key Services
+- **DexScreener Service**: Intelligent pool selection prioritizing established DEXes
+- **RugCheck Service**: Token security analysis and risk scoring  
+- **Price Tracking**: Real-time WebSocket price streaming every 3 seconds
+- **Metrics Service**: Advanced analytics with concentration ratios and holder analysis
 
+## 🐳 Docker Deployment
+
+### Environment Configuration
 | Variable | Description | Default |
 |----------|-------------|---------|
-| PORT | HTTP server port | 8080 |
+| PORT | HTTP server port | 3305 |
 | DATABASE_URL | SQLite database path | file:./prisma/dev.db |
 | REDIS_URL | Redis connection URL | redis://cache:6379 |
-| HELIUS_API_KEY | Helius API key | required |
+| HELIUS_API_KEY | Helius API key | **required** |
 | POLL_MS | Polling interval in milliseconds | 2000 |
+
+### Production Commands
+```bash
+# Full restart with clean volumes
+docker-compose down --volumes && ./setup.sh
+
+# View live logs
+docker-compose logs -f
+
+# Scale services
+docker-compose up --scale api=2
+```
+
+## 🛠️ Development Setup
+
+Local development without Docker:
+```bash
+npm ci
+npm run db:generate
+npm run db:push
+npm run dev        # API server
+npm run worker:dev # Background worker
+```
+
+The platform supports both standalone development and full containerized deployment for production use.
