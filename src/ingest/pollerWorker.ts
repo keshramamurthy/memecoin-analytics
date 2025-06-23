@@ -1,10 +1,8 @@
 import { Worker, Queue } from 'bullmq';
-import { redis, redisPublisher } from '../config/redis.js';
-import { prisma } from '../config/database.js';
+import { redis } from '../config/redis.js';
 import { priceTrackingService } from '../services/priceTrackingService.js';
 import { pollingJobsTotal } from '../config/metrics.js';
 
-// Using singleton instance imported above
 const PRICE_POLL_INTERVAL = 1000; // 1 second
 
 const priceQueue = new Queue('price-tracking', {
@@ -47,10 +45,6 @@ async function updateTokenPrice(tokenMint: string): Promise<void> {
   
   console.log(`Price updated successfully for token: ${tokenMint}`);
 }
-
-// Removed updateHolderSnapshots - no longer tracking individual holders
-
-// Removed recalculateMetrics - metrics are now simply price/market cap from PriceTrackingService
 
 async function schedulePriceTrackingJobs(): Promise<void> {
   const trackedTokens = await priceTrackingService.getTrackedTokens();

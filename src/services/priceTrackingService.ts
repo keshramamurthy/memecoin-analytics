@@ -26,10 +26,7 @@ export class PriceTrackingService {
   private connection: Connection;
   private solPriceCache: { price: number; timestamp: number } | null = null;
   private readonly SOL_PRICE_CACHE_TTL = 30000; // 30 seconds
-  // Removed poolCache - using direct RPC calls now
   private readonly POOL_CACHE_TTL = 300000; // 5 minutes
-  
-  // Removed axios - using only Solana RPC calls now
 
   private constructor() {
     // Use Helius RPC endpoint for better performance and reliability
@@ -281,8 +278,6 @@ export class PriceTrackingService {
     return price;
   }
 
-  // Removed Jupiter API - using only on-chain data
-
   private async getTokenSupply(tokenMint: string): Promise<number> {
     try {
       // Check Redis cache first with longer TTL
@@ -439,8 +434,6 @@ export class PriceTrackingService {
     }
   }
 
-  // Removed external API methods - using only on-chain data
-
   async updateTokenPrice(tokenMint: string): Promise<void> {
     try {
       const priceData = await this.getTokenPrice(tokenMint);
@@ -523,5 +516,4 @@ export class PriceTrackingService {
   }
 }
 
-// Export singleton instance
 export const priceTrackingService = PriceTrackingService.getInstance();

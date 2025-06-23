@@ -2,7 +2,7 @@ import { z } from 'zod';
 import 'dotenv/config';
 
 const EnvSchema = z.object({
-  PORT: z.coerce.number().default(8080),
+  PORT: z.coerce.number().default(3305),
   DATABASE_URL: z.string().default('file:./prisma/dev.db'),
   REDIS_URL: z.string().default('redis://localhost:6379'),
   HELIUS_API_KEY: z.string(),

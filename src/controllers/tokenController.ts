@@ -6,8 +6,6 @@ import {
   MetricsQuerySchema
 } from '../types/api.js';
 
-// Using singleton instance imported above
-
 export async function getTokens(req: Request, res: Response): Promise<void> {
   try {
     const { page, limit } = PaginationSchema.parse(req.query);
@@ -22,7 +20,7 @@ export async function getTokens(req: Request, res: Response): Promise<void> {
     const total = await prisma.tokenPrice.count();
 
     res.json({
-      data: tokens.map(token => ({
+      data: tokens.map((token: any) => ({
         mint: token.tokenMint,
         priceUsd: parseFloat(token.priceUsd.toString()),
         priceInSol: parseFloat(token.priceInSol.toString()),
@@ -133,7 +131,7 @@ export async function getTokenHistory(req: Request, res: Response): Promise<void
     });
 
     res.json({
-      data: priceHistory.map(entry => ({
+      data: priceHistory.map((entry: any) => ({
         priceUsd: parseFloat(entry.priceUsd.toString()),
         priceInSol: parseFloat(entry.priceInSol.toString()),
         marketCap: parseFloat(entry.marketCap.toString()),
@@ -148,5 +146,3 @@ export async function getTokenHistory(req: Request, res: Response): Promise<void
     });
   }
 }
-
-// Removed getTokenTrades - we no longer track individual trades
