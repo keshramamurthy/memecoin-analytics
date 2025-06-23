@@ -158,27 +158,50 @@ function testRestApiEndpoints(data) {
 }
 
 function testWebSocketConnections(data) {
-  const token = data.tokens[Math.floor(Math.random() * data.tokens.length)];
-  // Socket.IO format: connect to /socket.io/ with namespace as query param
-  const wsUrl = `${WS_URL}/socket.io/?EIO=4&transport=websocket&ns=/ws&token=${token}`;
+  const tokens = data.tokens.slice(0, Math.min(3, data.tokens.length)); // Test with up to 3 tokens safely
+  
+  // Skip test if no tokens available
+  if (tokens.length === 0) {
+    console.log('⚠️ No tokens available for WebSocket test');
+    return;
+  }
+  
+  // Socket.IO format: connect to /socket.io/ with namespace
+  const wsUrl = `${WS_URL}/socket.io/?EIO=4&transport=websocket&ns=/ws`;
   
   let connectionSuccessful = false;
   let messagesReceived = 0;
+  let subscriptionsCompleted = 0;
   
   const res = ws.connect(wsUrl, {
     protocols: ['websocket'],
   }, function (socket) {
     connectionSuccessful = true;
+    let socketConnected = false;
     
     socket.on('open', function open() {
-      console.log(`🔌 WebSocket connected for token: ${token.slice(0, 8)}...${token.slice(-8)}`);
+      console.log(`🔌 WebSocket connected for dynamic subscription test`);
       // Send Socket.IO connection packet
       socket.send('40/ws,'); // Socket.IO v4 connect packet for /ws namespace
+      socketConnected = true;
+      
+      // Wait a bit then start subscribing to multiple tokens
+      socket.setTimeout(() => {
+        if (socketConnected) {
+          tokens.forEach((token, index) => {
+            const delay = Math.max(100, (index + 1) * 500); // Ensure minimum 100ms delay
+            socket.setTimeout(() => {
+              const subscribeMessage = `42/ws,["message","${token},subscribe"]`;
+              socket.send(subscribeMessage);
+              console.log(`📝 Subscribing to: ${token.slice(0, 8)}...${token.slice(-8)}`);
+            }, delay);
+          });
+        }
+      }, 500);
     });
     
     socket.on('message', function message(data) {
       messagesReceived++;
-      console.log(`📨 Socket.IO message for ${token.slice(0, 8)}...${token.slice(-8)}: ${data}`);
       
       // Handle Socket.IO packets
       if (data.startsWith('42/ws,')) {
@@ -188,8 +211,15 @@ function testWebSocketConnections(data) {
           const eventName = parsedData[0];
           const eventData = parsedData[1];
           
-          if (eventName === 'price_update') {
-            console.log(`💰 Real-time update: ${token.slice(0, 8)}...${token.slice(-8)} = $${eventData.priceUsd || 'N/A'} (MC: $${eventData.marketCap?.toLocaleString() || 'N/A'})`);
+          if (eventName === 'connected') {
+            console.log(`🎉 Dynamic WebSocket connected: ${eventData.socketId}`);
+          } else if (eventName === 'subscription_success') {
+            console.log(`✅ Subscribed: ${eventData.tokenMint.slice(0, 8)}...${eventData.tokenMint.slice(-8)} (Total: ${eventData.totalSubscriptions})`);
+            subscriptionsCompleted++;
+          } else if (eventName === 'price_update') {
+            console.log(`💰 Multi-token update: ${eventData.tokenMint.slice(0, 8)}...${eventData.tokenMint.slice(-8)} = $${eventData.priceUsd || 'N/A'} (MC: $${eventData.marketCap?.toLocaleString() || 'N/A'})`);
+          } else if (eventName === 'subscription_error') {
+            console.log(`❌ Subscription error: ${eventData.tokenMint || 'unknown'} - ${eventData.message}`);
           }
         } catch (e) {
           // Could be Socket.IO control messages, which is normal
@@ -198,20 +228,33 @@ function testWebSocketConnections(data) {
     });
     
     socket.on('error', function (e) {
-      console.log(`❌ WebSocket error for ${token.slice(0, 8)}...${token.slice(-8)}: ${e.error()}`);
+      console.log(`❌ WebSocket error: ${e.error()}`);
       websocketErrors.add(1);
     });
     
-    // Keep connection open for a shorter duration since Socket.IO has overhead
+    // Keep connection open longer to test multi-token subscriptions
+    const finalTimeout = Math.max(3000, Math.random() * 4000 + 3000); // Ensure minimum 3 seconds
     socket.setTimeout(() => {
-      socket.close();
-    }, Math.random() * 3000 + 2000);
+      if (socketConnected && subscriptionsCompleted > 0 && tokens.length > 0) {
+        // Test unsubscribing from first token before closing
+        const unsubscribeMessage = `42/ws,["message","${tokens[0]},unsubscribe"]`;
+        socket.send(unsubscribeMessage);
+        console.log(`📝 Unsubscribing from: ${tokens[0].slice(0, 8)}...${tokens[0].slice(-8)}`);
+        
+        socket.setTimeout(() => {
+          socket.close();
+        }, 1000);
+      } else {
+        socket.close();
+      }
+    }, finalTimeout);
   });
   
   websocketConnectionRate.add(connectionSuccessful);
   
   check(res, {
     'WebSocket connection established': () => connectionSuccessful,
+    'Multiple subscriptions working': () => subscriptionsCompleted >= 2,
   });
 }
 
@@ -316,8 +359,10 @@ export function teardown(data) {
   console.log('✅ ROBUST BACKEND ARCHITECTURE DEMONSTRATED');
   console.log('   • Scalable DexScreener integration with batching');
   console.log('   • Efficient Redis caching and rate limiting');
-  console.log('   • WebSocket real-time capabilities');
+  console.log('   • Dynamic WebSocket subscriptions (multi-token per connection)');
+  console.log('   • Enhanced token analytics (concentration, holders, metadata)');
   console.log('   • Comprehensive monitoring and metrics');
   console.log('   • Graceful error handling and fallbacks');
+  console.log('   • Nuclear token validation and cleanup');
   console.log('================================================================\n');
 }
