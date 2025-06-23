@@ -38,7 +38,7 @@ const TEST_TOKENS = [
   // Core tokens (always available)
   'So11111111111111111111111111111111111111112',   // SOL
   'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
-  '9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump', // Your target token
+  '9yS8Bocd5geSqyY7hp9MeXmnfBNYw8nuw8rZFQeHEray', // Your test token
   'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', // BONK
   
   // Trending tokens from DexScreener
@@ -66,7 +66,7 @@ export function setup() {
   console.log('================================================================\n');
   
   // Verify API is running
-  const healthCheck = http.get(`${BASE_URL}/health`);
+  const healthCheck = http.get(`${BASE_URL}/api/health`);
   if (healthCheck.status !== 200) {
     throw new Error(`API not available. Health check failed: ${healthCheck.status}`);
   }
@@ -106,7 +106,7 @@ function testRestApiEndpoints(data) {
   
   // Test 1: Token price metrics
   const metricsStart = Date.now();
-  const metricsResponse = http.get(`${BASE_URL}/tokens/${token}/metrics?window=1h`);
+  const metricsResponse = http.get(`${BASE_URL}/api/tokens/${token}/metrics?window=1h`);
   
   const metricsSuccess = check(metricsResponse, {
     'Token metrics status is 200': (r) => r.status === 200,
@@ -131,7 +131,7 @@ function testRestApiEndpoints(data) {
   }
   
   // Test 2: Token holders (enhanced)
-  const holdersResponse = http.get(`${BASE_URL}/tokens/${token}/holders/top?limit=10`);
+  const holdersResponse = http.get(`${BASE_URL}/api/tokens/${token}/holders/top?limit=10`);
   const holdersSuccess = check(holdersResponse, {
     'Holders endpoint responds': (r) => r.status === 200,
     'Holders endpoint response time < 3s': (r) => r.timings.duration < 3000,
@@ -151,7 +151,7 @@ function testRestApiEndpoints(data) {
   }
   
   // Test 3: Trade history
-  const tradesResponse = http.get(`${BASE_URL}/tokens/${token}/trades?limit=50`);
+  const tradesResponse = http.get(`${BASE_URL}/api/tokens/${token}/trades?limit=50`);
   check(tradesResponse, {
     'Trades endpoint responds': (r) => r.status === 200 || r.status === 404, // 404 is acceptable if not implemented
   });
@@ -262,15 +262,15 @@ function testTokenDiscovery(data) {
   const discoveryStart = Date.now();
   
   // Test token listing with pagination
-  const tokensResponse = http.get(`${BASE_URL}/tokens?page=1&limit=20`);
+  const tokensResponse = http.get(`${BASE_URL}/api/tokens?page=1&limit=20`);
   
   const discoverySuccess = check(tokensResponse, {
     'Token discovery status is 200': (r) => r.status === 200,
     'Token discovery response time < 2s': (r) => r.timings.duration < 2000,
-    'Token discovery has pagination': (r) => {
+    'Token discovery has valid format': (r) => {
       try {
         const data = JSON.parse(r.body);
-        return data.pagination && data.data && Array.isArray(data.data);
+        return data.data && Array.isArray(data.data) && data.pagination;
       } catch (e) {
         return false;
       }
@@ -298,7 +298,7 @@ function testBatchOperations(data) {
   const batchStart = Date.now();
   
   // Test health endpoint (should be very fast)
-  const healthResponse = http.get(`${BASE_URL}/health`);
+  const healthResponse = http.get(`${BASE_URL}/api/health`);
   
   check(healthResponse, {
     'Health check is successful': (r) => r.status === 200,
@@ -306,7 +306,7 @@ function testBatchOperations(data) {
   });
   
   // Test Prometheus metrics endpoint
-  const metricsResponse = http.get(`${BASE_URL}/metrics`);
+  const metricsResponse = http.get(`${BASE_URL}/api/metrics`);
   
   const batchSuccess = check(metricsResponse, {
     'Metrics endpoint responds': (r) => r.status === 200,
@@ -323,7 +323,7 @@ function testBatchOperations(data) {
 }
 
 function testSingleTokenPrice(tokenMint) {
-  const priceResponse = http.get(`${BASE_URL}/tokens/${tokenMint}/metrics?window=5m`);
+  const priceResponse = http.get(`${BASE_URL}/api/tokens/${tokenMint}/metrics?window=5m`);
   
   const priceSuccess = check(priceResponse, {
     'Single token price success': (r) => r.status === 200,
